@@ -95,11 +95,7 @@ export function AppSidebar() {
                 );
                 return (
                   <li key={item.to}>
-                    {item.soon ? (
-                      <div className="cursor-not-allowed">{Content}</div>
-                    ) : (
-                      <Link to={item.to}>{Content}</Link>
-                    )}
+                    <Link to={item.to}>{Content}</Link>
                   </li>
                 );
               })}
