@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import type { LucideIcon } from "lucide-react";
 import { X, ExternalLink, FileText, Network, ShieldAlert, User } from "lucide-react";
 import { useInspector } from "@/lib/inspector-store";
 import { SeverityBadge } from "./severity-badge";
