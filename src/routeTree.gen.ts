@@ -12,9 +12,23 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppVulnerabilitiesRouteImport } from './routes/_app.vulnerabilities'
+import { Route as AppThreatIntelligenceRouteImport } from './routes/_app.threat-intelligence'
+import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppOrganizationsRouteImport } from './routes/_app.organizations'
+import { Route as AppNetworkRouteImport } from './routes/_app.network'
+import { Route as AppIntegrationsRouteImport } from './routes/_app.integrations'
 import { Route as AppIncidentsRouteImport } from './routes/_app.incidents'
+import { Route as AppIdentityRouteImport } from './routes/_app.identity'
 import { Route as AppEventsRouteImport } from './routes/_app.events'
+import { Route as AppEndpointsRouteImport } from './routes/_app.endpoints'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppCopilotRouteImport } from './routes/_app.copilot'
+import { Route as AppComplianceRouteImport } from './routes/_app.compliance'
+import { Route as AppCloudSecurityRouteImport } from './routes/_app.cloud-security'
+import { Route as AppAuditRouteImport } from './routes/_app.audit'
+import { Route as AppAttackGraphRouteImport } from './routes/_app.attack-graph'
+import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
 import { Route as AppIncidentsIncidentIdRouteImport } from './routes/_app.incidents.$incidentId'
 
 const LoginRoute = LoginRouteImport.update({
@@ -31,9 +45,44 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppVulnerabilitiesRoute = AppVulnerabilitiesRouteImport.update({
+  id: '/vulnerabilities',
+  path: '/vulnerabilities',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppThreatIntelligenceRoute = AppThreatIntelligenceRouteImport.update({
+  id: '/threat-intelligence',
+  path: '/threat-intelligence',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrganizationsRoute = AppOrganizationsRouteImport.update({
+  id: '/organizations',
+  path: '/organizations',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNetworkRoute = AppNetworkRouteImport.update({
+  id: '/network',
+  path: '/network',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppIntegrationsRoute = AppIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppIncidentsRoute = AppIncidentsRouteImport.update({
   id: '/incidents',
   path: '/incidents',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppIdentityRoute = AppIdentityRouteImport.update({
+  id: '/identity',
+  path: '/identity',
   getParentRoute: () => AppRoute,
 } as any)
 const AppEventsRoute = AppEventsRouteImport.update({
@@ -41,9 +90,44 @@ const AppEventsRoute = AppEventsRouteImport.update({
   path: '/events',
   getParentRoute: () => AppRoute,
 } as any)
+const AppEndpointsRoute = AppEndpointsRouteImport.update({
+  id: '/endpoints',
+  path: '/endpoints',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCopilotRoute = AppCopilotRouteImport.update({
+  id: '/copilot',
+  path: '/copilot',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppComplianceRoute = AppComplianceRouteImport.update({
+  id: '/compliance',
+  path: '/compliance',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCloudSecurityRoute = AppCloudSecurityRouteImport.update({
+  id: '/cloud-security',
+  path: '/cloud-security',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAttackGraphRoute = AppAttackGraphRouteImport.update({
+  id: '/attack-graph',
+  path: '/attack-graph',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAlertsRoute = AppAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
   getParentRoute: () => AppRoute,
 } as any)
 const AppIncidentsIncidentIdRoute = AppIncidentsIncidentIdRouteImport.update({
@@ -55,17 +139,45 @@ const AppIncidentsIncidentIdRoute = AppIncidentsIncidentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/alerts': typeof AppAlertsRoute
+  '/attack-graph': typeof AppAttackGraphRoute
+  '/audit': typeof AppAuditRoute
+  '/cloud-security': typeof AppCloudSecurityRoute
+  '/compliance': typeof AppComplianceRoute
+  '/copilot': typeof AppCopilotRoute
   '/dashboard': typeof AppDashboardRoute
+  '/endpoints': typeof AppEndpointsRoute
   '/events': typeof AppEventsRoute
+  '/identity': typeof AppIdentityRoute
   '/incidents': typeof AppIncidentsRouteWithChildren
+  '/integrations': typeof AppIntegrationsRoute
+  '/network': typeof AppNetworkRoute
+  '/organizations': typeof AppOrganizationsRoute
+  '/settings': typeof AppSettingsRoute
+  '/threat-intelligence': typeof AppThreatIntelligenceRoute
+  '/vulnerabilities': typeof AppVulnerabilitiesRoute
   '/incidents/$incidentId': typeof AppIncidentsIncidentIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/alerts': typeof AppAlertsRoute
+  '/attack-graph': typeof AppAttackGraphRoute
+  '/audit': typeof AppAuditRoute
+  '/cloud-security': typeof AppCloudSecurityRoute
+  '/compliance': typeof AppComplianceRoute
+  '/copilot': typeof AppCopilotRoute
   '/dashboard': typeof AppDashboardRoute
+  '/endpoints': typeof AppEndpointsRoute
   '/events': typeof AppEventsRoute
+  '/identity': typeof AppIdentityRoute
   '/incidents': typeof AppIncidentsRouteWithChildren
+  '/integrations': typeof AppIntegrationsRoute
+  '/network': typeof AppNetworkRoute
+  '/organizations': typeof AppOrganizationsRoute
+  '/settings': typeof AppSettingsRoute
+  '/threat-intelligence': typeof AppThreatIntelligenceRoute
+  '/vulnerabilities': typeof AppVulnerabilitiesRoute
   '/incidents/$incidentId': typeof AppIncidentsIncidentIdRoute
 }
 export interface FileRoutesById {
@@ -73,9 +185,23 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/_app/alerts': typeof AppAlertsRoute
+  '/_app/attack-graph': typeof AppAttackGraphRoute
+  '/_app/audit': typeof AppAuditRoute
+  '/_app/cloud-security': typeof AppCloudSecurityRoute
+  '/_app/compliance': typeof AppComplianceRoute
+  '/_app/copilot': typeof AppCopilotRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/endpoints': typeof AppEndpointsRoute
   '/_app/events': typeof AppEventsRoute
+  '/_app/identity': typeof AppIdentityRoute
   '/_app/incidents': typeof AppIncidentsRouteWithChildren
+  '/_app/integrations': typeof AppIntegrationsRoute
+  '/_app/network': typeof AppNetworkRoute
+  '/_app/organizations': typeof AppOrganizationsRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/_app/threat-intelligence': typeof AppThreatIntelligenceRoute
+  '/_app/vulnerabilities': typeof AppVulnerabilitiesRoute
   '/_app/incidents/$incidentId': typeof AppIncidentsIncidentIdRoute
 }
 export interface FileRouteTypes {
@@ -83,26 +209,68 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/alerts'
+    | '/attack-graph'
+    | '/audit'
+    | '/cloud-security'
+    | '/compliance'
+    | '/copilot'
     | '/dashboard'
+    | '/endpoints'
     | '/events'
+    | '/identity'
     | '/incidents'
+    | '/integrations'
+    | '/network'
+    | '/organizations'
+    | '/settings'
+    | '/threat-intelligence'
+    | '/vulnerabilities'
     | '/incidents/$incidentId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
+    | '/alerts'
+    | '/attack-graph'
+    | '/audit'
+    | '/cloud-security'
+    | '/compliance'
+    | '/copilot'
     | '/dashboard'
+    | '/endpoints'
     | '/events'
+    | '/identity'
     | '/incidents'
+    | '/integrations'
+    | '/network'
+    | '/organizations'
+    | '/settings'
+    | '/threat-intelligence'
+    | '/vulnerabilities'
     | '/incidents/$incidentId'
   id:
     | '__root__'
     | '/'
     | '/_app'
     | '/login'
+    | '/_app/alerts'
+    | '/_app/attack-graph'
+    | '/_app/audit'
+    | '/_app/cloud-security'
+    | '/_app/compliance'
+    | '/_app/copilot'
     | '/_app/dashboard'
+    | '/_app/endpoints'
     | '/_app/events'
+    | '/_app/identity'
     | '/_app/incidents'
+    | '/_app/integrations'
+    | '/_app/network'
+    | '/_app/organizations'
+    | '/_app/settings'
+    | '/_app/threat-intelligence'
+    | '/_app/vulnerabilities'
     | '/_app/incidents/$incidentId'
   fileRoutesById: FileRoutesById
 }
@@ -135,11 +303,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/vulnerabilities': {
+      id: '/_app/vulnerabilities'
+      path: '/vulnerabilities'
+      fullPath: '/vulnerabilities'
+      preLoaderRoute: typeof AppVulnerabilitiesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/threat-intelligence': {
+      id: '/_app/threat-intelligence'
+      path: '/threat-intelligence'
+      fullPath: '/threat-intelligence'
+      preLoaderRoute: typeof AppThreatIntelligenceRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/organizations': {
+      id: '/_app/organizations'
+      path: '/organizations'
+      fullPath: '/organizations'
+      preLoaderRoute: typeof AppOrganizationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/network': {
+      id: '/_app/network'
+      path: '/network'
+      fullPath: '/network'
+      preLoaderRoute: typeof AppNetworkRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/integrations': {
+      id: '/_app/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof AppIntegrationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/incidents': {
       id: '/_app/incidents'
       path: '/incidents'
       fullPath: '/incidents'
       preLoaderRoute: typeof AppIncidentsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/identity': {
+      id: '/_app/identity'
+      path: '/identity'
+      fullPath: '/identity'
+      preLoaderRoute: typeof AppIdentityRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/events': {
@@ -149,11 +366,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEventsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/endpoints': {
+      id: '/_app/endpoints'
+      path: '/endpoints'
+      fullPath: '/endpoints'
+      preLoaderRoute: typeof AppEndpointsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/dashboard': {
       id: '/_app/dashboard'
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/copilot': {
+      id: '/_app/copilot'
+      path: '/copilot'
+      fullPath: '/copilot'
+      preLoaderRoute: typeof AppCopilotRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/compliance': {
+      id: '/_app/compliance'
+      path: '/compliance'
+      fullPath: '/compliance'
+      preLoaderRoute: typeof AppComplianceRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/cloud-security': {
+      id: '/_app/cloud-security'
+      path: '/cloud-security'
+      fullPath: '/cloud-security'
+      preLoaderRoute: typeof AppCloudSecurityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/audit': {
+      id: '/_app/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attack-graph': {
+      id: '/_app/attack-graph'
+      path: '/attack-graph'
+      fullPath: '/attack-graph'
+      preLoaderRoute: typeof AppAttackGraphRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/alerts': {
+      id: '/_app/alerts'
+      path: '/alerts'
+      fullPath: '/alerts'
+      preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/incidents/$incidentId': {
@@ -179,15 +445,43 @@ const AppIncidentsRouteWithChildren = AppIncidentsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
+  AppAlertsRoute: typeof AppAlertsRoute
+  AppAttackGraphRoute: typeof AppAttackGraphRoute
+  AppAuditRoute: typeof AppAuditRoute
+  AppCloudSecurityRoute: typeof AppCloudSecurityRoute
+  AppComplianceRoute: typeof AppComplianceRoute
+  AppCopilotRoute: typeof AppCopilotRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppEndpointsRoute: typeof AppEndpointsRoute
   AppEventsRoute: typeof AppEventsRoute
+  AppIdentityRoute: typeof AppIdentityRoute
   AppIncidentsRoute: typeof AppIncidentsRouteWithChildren
+  AppIntegrationsRoute: typeof AppIntegrationsRoute
+  AppNetworkRoute: typeof AppNetworkRoute
+  AppOrganizationsRoute: typeof AppOrganizationsRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppThreatIntelligenceRoute: typeof AppThreatIntelligenceRoute
+  AppVulnerabilitiesRoute: typeof AppVulnerabilitiesRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAlertsRoute: AppAlertsRoute,
+  AppAttackGraphRoute: AppAttackGraphRoute,
+  AppAuditRoute: AppAuditRoute,
+  AppCloudSecurityRoute: AppCloudSecurityRoute,
+  AppComplianceRoute: AppComplianceRoute,
+  AppCopilotRoute: AppCopilotRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppEndpointsRoute: AppEndpointsRoute,
   AppEventsRoute: AppEventsRoute,
+  AppIdentityRoute: AppIdentityRoute,
   AppIncidentsRoute: AppIncidentsRouteWithChildren,
+  AppIntegrationsRoute: AppIntegrationsRoute,
+  AppNetworkRoute: AppNetworkRoute,
+  AppOrganizationsRoute: AppOrganizationsRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppThreatIntelligenceRoute: AppThreatIntelligenceRoute,
+  AppVulnerabilitiesRoute: AppVulnerabilitiesRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
