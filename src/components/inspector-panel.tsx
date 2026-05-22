@@ -138,7 +138,7 @@ function IncidentInspector({ i }: { i: import("@/lib/mock/types").Incident }) {
   );
 }
 
-function Section({ title, icon: Icon, children }: { title: string; icon: any; children: React.ReactNode }) {
+function Section({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) {
   return (
     <div>
       <div className="mb-2 flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
