@@ -1,4 +1,5 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, Outlet, Navigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppTopbar } from "@/components/app-topbar";
 import { InspectorPanel } from "@/components/inspector-panel";
@@ -9,13 +10,14 @@ export const Route = createFileRoute("/_app")({
 });
 
 function AppLayout() {
-  // Client-side mock auth gate. Falls through to login if no session.
-  // SSR-safe: read inside the component, not in beforeLoad.
-  if (typeof window !== "undefined") {
-    const user = useAuth.getState().user;
-    if (!user) {
-      throw redirect({ to: "/login" });
-    }
+  const user = useAuth((s) => s.user);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  // Avoid SSR/hydration redirect — only gate on client after mount.
+  if (mounted && !user) {
+    return <Navigate to="/login" />;
   }
 
   return (
