@@ -52,4 +52,79 @@ export interface Incident {
   linkedEventIds: string[];
 }
 
+export type AlertSeverity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface Alert {
+  id: string;
+  rule: string;
+  severity: AlertSeverity;
+  source: string;
+  owner: string | null;
+  aiPriorityScore: number;
+  dedupCount: number;
+  escalated: boolean;
+  acknowledged: boolean;
+  suppressed: boolean;
+  createdAt: string;
+  updatedAt: string;
+  description: string;
+  raw: Record<string, unknown>;
+}
+
+export type EndpointOS = "windows" | "linux" | "macos";
+
+export interface RiskScoreBreakdown {
+  overall: number;
+  malware: number;
+  network: number;
+  credential: number;
+  behavior: number;
+}
+
+export interface Endpoint {
+  id: string;
+  hostname: string;
+  os: EndpointOS;
+  riskScore: RiskScoreBreakdown;
+  agentVersion: string;
+  lastCheckIn: string;
+  isolated: boolean;
+  malwareIndicators: string[];
+  sessionCount: number;
+  ip: string;
+  tags: string[];
+}
+
+export type PatchStatus = "unpatched" | "patch_available" | "patched";
+export type ExploitStatus = "none" | "poc" | "active" | "weaponized";
+
+export interface Vulnerability {
+  id: string;
+  cve: string;
+  cvss: number;
+  epss: number;
+  affectedPackages: string[];
+  assetCount: number;
+  patchStatus: PatchStatus;
+  exploitStatus: ExploitStatus;
+  severity: Severity;
+  publishedAt: string;
+  description: string;
+}
+
+export type ActorOrigin = "nation_state" | "criminal" | "hacktivist" | "insider" | "unknown";
+
+export interface ThreatActor {
+  id: string;
+  name: string;
+  origin: ActorOrigin;
+  motivation: string[];
+  ttps: string[];
+  aliases: string[];
+  activityTimeline: { date: string; event: string }[];
+  linkedCampaigns: string[];
+  lastSeen: string;
+  severity: Severity;
+}
+
 export interface MetricPoint { t: number; v: number; }

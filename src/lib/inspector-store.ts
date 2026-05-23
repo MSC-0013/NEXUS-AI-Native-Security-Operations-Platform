@@ -1,10 +1,13 @@
 import { create } from "zustand";
-import type { SecurityEvent } from "./mock/types";
-import type { Incident } from "./mock/types";
+import type { SecurityEvent, Incident, Alert, Endpoint, Vulnerability, ThreatActor } from "./mock/types";
 
 type InspectorTarget =
   | { kind: "event"; event: SecurityEvent }
   | { kind: "incident"; incident: Incident }
+  | { kind: "alert"; alert: Alert }
+  | { kind: "endpoint"; endpoint: Endpoint }
+  | { kind: "vulnerability"; vulnerability: Vulnerability }
+  | { kind: "actor"; actor: ThreatActor }
   | null;
 
 interface InspectorState {

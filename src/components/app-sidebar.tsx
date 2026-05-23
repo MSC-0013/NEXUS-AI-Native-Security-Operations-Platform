@@ -1,9 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  Activity, AlertTriangle, Boxes, Cloud, Compass, FileSearch, Fingerprint,
-  Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Network,
-  Plug, Settings, Shield, ShieldAlert, Sparkles, Users,
-} from "lucide-react";
+import { Activity, TriangleAlert as AlertTriangle, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Network, Plug, Rocket, Settings, Shield, ShieldAlert, Sparkles, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = { to: string; label: string; icon: typeof Gauge };
@@ -17,6 +13,8 @@ const GROUPS: NavGroup[] = [
       { to: "/events", label: "Security Events", icon: FileSearch },
       { to: "/incidents", label: "Incidents", icon: ShieldAlert },
       { to: "/alerts", label: "Alerts", icon: AlertTriangle },
+      { to: "/notifications", label: "Notifications", icon: Bell },
+      { to: "/cases", label: "Cases", icon: Briefcase },
     ],
   },
   {
@@ -35,6 +33,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: "/attack-graph", label: "Attack Graph", icon: GitBranch },
       { to: "/copilot", label: "AI Copilot", icon: Sparkles },
+      { to: "/investigations", label: "Investigations", icon: BookOpen },
     ],
   },
   {
@@ -45,6 +44,17 @@ const GROUPS: NavGroup[] = [
       { to: "/integrations", label: "Integrations", icon: Plug },
       { to: "/organizations", label: "Organization", icon: Users },
       { to: "/settings", label: "Settings", icon: Settings },
+      { to: "/onboarding", label: "Onboarding", icon: Rocket },
+    ],
+  },
+  {
+    label: "Platform",
+    items: [
+      { to: "/reports", label: "Reports", icon: FileText },
+      { to: "/developer", label: "Developer", icon: Code },
+      { to: "/status", label: "System Status", icon: Activity },
+      { to: "/knowledge", label: "Knowledge Base", icon: BookOpen },
+      { to: "/platform-health", label: "Platform Health", icon: Cpu },
     ],
   },
 ];

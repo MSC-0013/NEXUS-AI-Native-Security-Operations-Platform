@@ -1,8 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  Activity, AlertTriangle, Boxes, Cloud, Fingerprint, Gauge,
-  ShieldAlert, ShieldCheck, Sparkles, Zap,
-} from "lucide-react";
+import { Activity, TriangleAlert as AlertTriangle, Boxes, Cloud, FingerprintPattern as Fingerprint, Gauge, ShieldAlert, ShieldCheck, Sparkles, Zap } from "lucide-react";
 import { useMemo } from "react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer,
@@ -26,7 +23,7 @@ export const Route = createFileRoute("/_app/dashboard")({
 });
 
 function DashboardPage() {
-  const live = useLiveEvents(40, 1400);
+  const { events: live, status: streamStatus } = useLiveEvents(40, 1400);
   const openInspector = useInspector((s) => s.open);
 
   const metricSeries = useMemo(() => ({

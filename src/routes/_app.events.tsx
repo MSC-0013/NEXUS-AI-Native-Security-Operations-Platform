@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Filter, Pause, Play, Search } from "lucide-react";
+import { ListFilter as Filter, Pause, Play, Search } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { SEED_EVENTS } from "@/lib/mock/generators";
 import { useInspector } from "@/lib/inspector-store";
@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_app/events")({
 const SEVERITY_OPTS: Severity[] = ["critical", "high", "medium", "info", "healthy"];
 
 function EventsPage() {
-  const live = useLiveEvents(30, 1200);
+  const { events: live, status: streamStatus } = useLiveEvents(30, 1200);
   const [streamOn, setStreamOn] = useState(true);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<Severity[]>(["critical", "high", "medium", "info"]);
