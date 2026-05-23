@@ -3,6 +3,7 @@ import { Bell, Circle as CircleHelp, Clock, Command as CmdIcon, Search } from "l
 import { useAuth } from "@/lib/auth-store";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { CommandPalette } from "./command-palette";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 import { useConnectionState, useHeartbeat, useStreamStats } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "@tanstack/react-router";
@@ -42,6 +43,8 @@ export function AppTopbar() {
   return (
     <header className="sticky top-0 z-30 h-14 border-b border-border bg-background/80 backdrop-blur">
       <div className="flex h-full items-center gap-3 px-4">
+        <WorkspaceSwitcher />
+
         <button
           onClick={() => setOpen(true)}
           className="group flex w-80 max-w-[40vw] items-center gap-2 rounded-md border border-border bg-surface/60 px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-surface"

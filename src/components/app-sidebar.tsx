@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Activity, TriangleAlert as AlertTriangle, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Network, Plug, Rocket, Settings, Shield, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { Activity, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, Crosshair, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Network, Plug, Rocket, RotateCcw, Settings, Shield, ShieldAlert, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = { to: string; label: string; icon: typeof Gauge };
@@ -10,6 +10,7 @@ const GROUPS: NavGroup[] = [
     label: "Operate",
     items: [
       { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
+      { to: "/executive", label: "Executive View", icon: BarChart3 },
       { to: "/events", label: "Security Events", icon: FileSearch },
       { to: "/incidents", label: "Incidents", icon: ShieldAlert },
       { to: "/alerts", label: "Alerts", icon: AlertTriangle },
@@ -34,6 +35,18 @@ const GROUPS: NavGroup[] = [
       { to: "/attack-graph", label: "Attack Graph", icon: GitBranch },
       { to: "/copilot", label: "AI Copilot", icon: Sparkles },
       { to: "/investigations", label: "Investigations", icon: BookOpen },
+      { to: "/hunt", label: "Threat Hunting", icon: Crosshair },
+      { to: "/forensics", label: "Forensics", icon: FileSearch },
+      { to: "/timeline", label: "Timeline", icon: Activity },
+    ],
+  },
+  {
+    label: "Analyze",
+    items: [
+      { to: "/security-graph", label: "Security Graph", icon: Network },
+      { to: "/query", label: "Query Language", icon: Terminal },
+      { to: "/detection-rules", label: "Detection Rules", icon: Shield },
+      { to: "/policies", label: "Policy Engine", icon: ListChecks },
     ],
   },
   {
@@ -41,10 +54,10 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: "/compliance", label: "Compliance", icon: ListChecks },
       { to: "/audit", label: "Audit Log", icon: KeyRound },
-      { to: "/integrations", label: "Integrations", icon: Plug },
-      { to: "/organizations", label: "Organization", icon: Users },
-      { to: "/settings", label: "Settings", icon: Settings },
-      { to: "/onboarding", label: "Onboarding", icon: Rocket },
+      { to: "/policies", label: "Policies", icon: Shield },
+      { to: "/sso", label: "SSO & Identity", icon: KeyRound },
+      { to: "/automation", label: "Automation", icon: Workflow },
+      { to: "/ownership", label: "Ownership", icon: Users },
     ],
   },
   {
@@ -55,6 +68,19 @@ const GROUPS: NavGroup[] = [
       { to: "/status", label: "System Status", icon: Activity },
       { to: "/knowledge", label: "Knowledge Base", icon: BookOpen },
       { to: "/platform-health", label: "Platform Health", icon: Cpu },
+      { to: "/digital-twin", label: "Digital Twin", icon: Boxes },
+      { to: "/attack-replay", label: "Attack Replay", icon: RotateCcw },
+      { to: "/threat-simulation", label: "Simulation", icon: Crosshair },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { to: "/settings", label: "Settings", icon: Settings },
+      { to: "/billing", label: "Billing", icon: BarChart3 },
+      { to: "/onboarding", label: "Onboarding", icon: Rocket },
+      { to: "/integrations", label: "Integrations", icon: Plug },
+      { to: "/organizations", label: "Organization", icon: Users },
     ],
   },
 ];

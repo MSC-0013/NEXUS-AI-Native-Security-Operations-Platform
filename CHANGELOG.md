@@ -2,6 +2,38 @@
 
 All notable changes to the NEXUS project are documented in this file.
 
+## [0.3.0] — 2026-05-23
+
+### Phase 3 — Intelligence Layer
+
+The platform evolves from an operational console into an intelligence-driven security operations workspace with cross-module correlation, AI reasoning, collaborative workflows, and enterprise multi-tenancy.
+
+#### New Pages
+
+- **/timeline** — Unified operational timeline aggregating alerts, incidents, deployments, AI events, endpoint changes, and policy events with severity grouping and correlation badges
+- **/hunt** — Threat hunting workbench with query editor, saved hunting queries, IOC search, anomaly detection, attack pivots, and behavioral analytics
+- **/policies** — Policy engine with detection, alert, IAM, endpoint, retention, and AI governance policies with toggle controls and violation tracking
+- **/security-graph** — Relationship intelligence graph showing entity correlations, attack propagation, blast radius, and AI correlation summaries
+- **/query** — SIEM query language system with syntax editor, autocomplete, saved queries, query history, templates, and results table
+- **/billing** — Billing and usage platform with plan details, usage quotas, seat management, ingestion breakdown, and billing history
+- **/sso** — SSO and enterprise identity management with SAML/Okta/Azure AD/Google Workspace providers, directory sync, and provisioning settings
+- **/automation** — Automation workflows with trigger-action chains, alert automation, remediation workflows, auto-ticketing, and integration status
+- **/forensics** — Forensics workbench with file timeline, process tree, memory artifacts, suspicious binaries, and evidence viewer
+- **/detection-rules** — Detection rule builder with Sigma-like rules, condition builder UI, logic tree visualization, realtime testing, and rule simulation
+- **/digital-twin** — Digital twin infrastructure view with live topology, health/security/traffic overlays, and service relationship visualization
+- **/attack-replay** — Attack replay engine with step-by-step playback of historical incidents, kill chain timeline, and detection gap analysis
+- **/threat-simulation** — Threat simulation engine with ransomware, credential stuffing, lateral movement, phishing, and supply chain attack scenarios
+- **/executive** — Executive security dashboard with risk posture, compliance scores, financial impact, SLA performance, and attack trends
+- **/ownership** — Service ownership system with service catalog, on-call scheduling, escalation chains, team metrics, and unassigned entity management
+
+#### Infrastructure
+
+- **Multi-tenant workspace system** — Workspace store with org isolation, environment switching (prod/stage/dev), region scoping, and workspaceSwitcher component in topbar
+- **Collaboration store** — Collaborators with presence tracking, threaded comments with mentions/reactions, annotations with position data, and page-level presence
+- **Correlation engine** — Cross-module correlation store linking incidents to alerts, endpoints, vulnerabilities, actors, and cloud assets with AI summaries and blast radius calculation
+- **Sidebar navigation** — Expanded to 7 groups (Operate, Detect, Investigate, Analyze, Govern, Platform, Admin) with all new routes
+- **Topbar** — Added WorkspaceSwitcher component with org switching, environment chips, and region selector
+
 ## [0.2.0] — 2026-05-23
 
 ### Phase 2 Evolution
