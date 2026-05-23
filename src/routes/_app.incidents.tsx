@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, Star } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { SEED_INCIDENTS } from "@/lib/mock/generators";
 import { useInspector } from "@/lib/inspector-store";
+import { useIncidentStore } from "@/lib/incident-store";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
-import type { IncidentStatus } from "@/lib/mock/types";
+import type { Incident, IncidentStatus } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/incidents")({
   head: () => ({
@@ -30,20 +31,32 @@ const STATUS_STYLE: Record<IncidentStatus, string> = {
 function IncidentsPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<IncidentStatus[]>(["open", "investigating", "contained"]);
+  const [starredOnly, setStarredOnly] = useState(false);
   const openInspector = useInspector((s) => s.open);
+  const overrides = useIncidentStore((s) => s.overrides);
+
+  const merged: Incident[] = useMemo(
+    () => SEED_INCIDENTS.map((i) => ({
+      ...i,
+      status: overrides[i.code]?.status ?? i.status,
+      assignee: overrides[i.code]?.assignee ?? i.assignee,
+    })),
+    [overrides],
+  );
 
   const filtered = useMemo(() => {
     const qq = q.toLowerCase().trim();
-    return SEED_INCIDENTS
+    return merged
       .filter((i) => status.includes(i.status))
+      .filter((i) => !starredOnly || overrides[i.code]?.starred)
       .filter((i) => !qq || i.title.toLowerCase().includes(qq) || i.code.toLowerCase().includes(qq) || i.assignee.includes(qq));
-  }, [q, status]);
+  }, [q, status, merged, overrides, starredOnly]);
 
   const counts = useMemo(() => {
     const c: Record<IncidentStatus, number> = { open: 0, investigating: 0, contained: 0, resolved: 0 };
-    SEED_INCIDENTS.forEach((i) => { c[i.status]++; });
+    merged.forEach((i) => { c[i.status]++; });
     return c;
-  }, []);
+  }, [merged]);
 
   return (
     <div className="p-6 space-y-4 max-w-[1700px] mx-auto">
@@ -85,6 +98,15 @@ function IncidentsPage() {
               >{s}</button>
             ))}
           </div>
+          <button
+            onClick={() => setStarredOnly((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-mono uppercase tracking-wider",
+              starredOnly ? "border-high/40 bg-high/10 text-high" : "border-border bg-background text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Star className={cn("size-3.5", starredOnly && "fill-high")} /> starred
+          </button>
         </div>
 
         <table className="w-full text-sm">
