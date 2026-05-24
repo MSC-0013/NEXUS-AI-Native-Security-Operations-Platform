@@ -90,6 +90,17 @@ const GROUPS: NavGroup[] = [
 export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const role = useAuth((s) => s.user?.role);
+
+  const visibleGroups = GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((item) => {
+      if (!role) return true;
+      const perm = permissionForPath(item.to);
+      return !perm || can(role, perm);
+    }),
+  })).filter((g) => g.items.length > 0);
+
+  return (
     <aside className="hidden md:flex h-screen sticky top-0 w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2 px-4 h-14 border-b border-sidebar-border">
         <div className="relative grid size-7 place-items-center rounded-md bg-primary/15 text-primary">
@@ -103,7 +114,7 @@ export function AppSidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-5">
-        {GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label}>
             <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               {group.label}
@@ -112,29 +123,33 @@ export function AppSidebar() {
               {group.items.map((item) => {
                 const active = pathname === item.to || pathname.startsWith(item.to + "/");
                 const Icon = item.icon;
-                const Content = (
-                  <span
-                    className={cn(
-                      "group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition-colors",
-                      active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                    )}
-                  >
-                    <Icon className="size-4 shrink-0" />
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {active && <span className="size-1.5 rounded-full bg-primary" />}
-                  </span>
-                );
                 return (
                   <li key={item.to}>
-                    <Link to={item.to}>{Content}</Link>
+                    <Link to={item.to}>
+                      <span
+                        className={cn(
+                          "group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition-colors",
+                          active
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+                        )}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {active && <span className="size-1.5 rounded-full bg-primary" />}
+                      </span>
+                    </Link>
                   </li>
                 );
               })}
             </ul>
           </div>
         ))}
+        {visibleGroups.length === 0 && (
+          <div className="px-3 py-4 text-[11px] text-muted-foreground flex items-center gap-2">
+            <Lock className="size-3" /> No modules available for this role.
+          </div>
+        )}
       </nav>
 
       <div className="border-t border-sidebar-border px-3 py-3">
