@@ -1,6 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Activity, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, Crosshair, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Network, Plug, Rocket, RotateCcw, Settings, Shield, ShieldAlert, Sparkles, Terminal, Users, Workflow } from "lucide-react";
+import { Activity, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, Crosshair, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Lock, Network, Plug, Rocket, RotateCcw, Settings, Shield, ShieldAlert, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-store";
+import { can, permissionForPath } from "@/lib/rbac";
 
 type NavItem = { to: string; label: string; icon: typeof Gauge };
 type NavGroup = { label: string; items: NavItem[] };
