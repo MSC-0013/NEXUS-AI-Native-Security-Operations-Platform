@@ -1,4 +1,7 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+
 
 export type Environment = "production" | "staging" | "development";
 export type Region = "us-east-1" | "eu-west-1" | "ap-southeast-1";
@@ -84,22 +87,34 @@ const WORKSPACES: Workspace[] = [
   },
 ];
 
-export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspaces: WORKSPACES,
-  activeWorkspaceId: "ws-1",
-  environment: "production",
-  region: "us-east-1",
+export const useWorkspaceStore = create<WorkspaceState>()(
+  persist(
+    (set, get) => ({
+      workspaces: WORKSPACES,
+      activeWorkspaceId: "ws-1",
+      environment: "production",
+      region: "us-east-1",
 
-  setActiveWorkspace: (id) => {
-    const ws = WORKSPACES.find((w) => w.id === id);
-    if (ws) {
-      set({ activeWorkspaceId: id, environment: ws.environment, region: ws.region });
-    }
-  },
-  setEnvironment: (env) => set({ environment: env }),
-  setRegion: (region) => set({ region }),
-  getActiveWorkspace: () => {
-    const state = get();
-    return WORKSPACES.find((w) => w.id === state.activeWorkspaceId) ?? WORKSPACES[0];
-  },
-}));
+      setActiveWorkspace: (id) => {
+        const ws = WORKSPACES.find((w) => w.id === id);
+        if (ws) {
+          set({ activeWorkspaceId: id, environment: ws.environment, region: ws.region });
+        }
+      },
+      setEnvironment: (env) => set({ environment: env }),
+      setRegion: (region) => set({ region }),
+      getActiveWorkspace: () => {
+        const state = get();
+        return WORKSPACES.find((w) => w.id === state.activeWorkspaceId) ?? WORKSPACES[0];
+      },
+    }),
+    {
+      name: "nexus.workspace",
+      partialize: (s) => ({
+        activeWorkspaceId: s.activeWorkspaceId,
+        environment: s.environment,
+        region: s.region,
+      }),
+    },
+  ),
+);
