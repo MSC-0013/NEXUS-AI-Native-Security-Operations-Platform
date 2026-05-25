@@ -1,30 +1,15 @@
 import { Command } from "cmdk";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, TriangleAlert as AlertTriangle, Bell, Bug, CaseSensitive, FileSearch, FingerprintPattern as Fingerprint, GitBranch, Globe, LayoutDashboard, ListChecks, Plug, Search, Settings, ShieldAlert, Sparkles, User, Monitor, HeartPulse, BookOpen, Flag, Server, Hash } from "lucide-react";
+import { Activity, TriangleAlert as AlertTriangle, Bell, Bug, CaseSensitive, FileSearch, FingerprintPattern as Fingerprint, GitBranch, Globe, ListChecks, Plug, Search, Settings, Sparkles, User, Hash, Lock } from "lucide-react";
+import { useAuth } from "@/lib/auth-store";
+import { visibleFeaturesForRole } from "@/lib/workspace-config";
 
 /* ------------------------------------------------------------------ */
 /*  Static data                                                        */
 /* ------------------------------------------------------------------ */
 
-const PAGES = [
-  { to: "/dashboard", label: "Overview", icon: LayoutDashboard, hint: "Operational summary" },
-  { to: "/events", label: "Security Events", icon: FileSearch, hint: "SIEM explorer" },
-  { to: "/incidents", label: "Incidents", icon: ShieldAlert, hint: "Triage and response" },
-  { to: "/endpoints", label: "Endpoints", icon: Server, hint: "Asset inventory" },
-  { to: "/vulnerabilities", label: "Vulnerabilities", icon: Bug, hint: "CVE tracker" },
-  { to: "/actors", label: "Threat Actors", icon: User, hint: "Intel profiles" },
-  { to: "/profile", label: "Profile", icon: User, hint: "Account settings" },
-  { to: "/notifications", label: "Notifications", icon: Bell, hint: "Alert feed" },
-  { to: "/investigations", label: "Investigations", icon: Search, hint: "Case workbench" },
-  { to: "/cases", label: "Cases", icon: Flag, hint: "Case management" },
-  { to: "/reports", label: "Reports", icon: Activity, hint: "Generated reports" },
-  { to: "/developer", label: "Developer", icon: CaseSensitive, hint: "API & SDK" },
-  { to: "/status", label: "Platform Status", icon: HeartPulse, hint: "System health" },
-  { to: "/onboarding", label: "Onboarding", icon: Flag, hint: "Setup guide" },
-  { to: "/knowledge", label: "Knowledge Base", icon: BookOpen, hint: "Docs & playbooks" },
-  { to: "/platform-health", label: "Platform Health", icon: Monitor, hint: "Service metrics" },
-];
+/* PAGES are derived per-role from workspace-config — see usePages() below. */
 
 const ACTIONS = [
   { label: "Open AI Copilot", icon: Sparkles, hint: "Soon" },
@@ -114,6 +99,8 @@ function searchMatches(query: string, label: string, detail: string): boolean {
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const navigate = useNavigate();
+  const role = useAuth((s) => s.user?.role);
+  const pages = useMemo(() => visibleFeaturesForRole(role), [role]);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -234,9 +221,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               </Command.Group>
             )}
 
-            {/* ---------- Pages ---------- */}
-            <Command.Group heading="Navigate" className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              {PAGES.map((p) => {
+            {/* ---------- Pages (role-filtered) ---------- */}
+            <Command.Group heading={`Navigate · ${pages.length} available`} className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              {pages.length === 0 && (
+                <div className="flex items-center gap-2 rounded-md px-2.5 py-3 text-xs text-muted-foreground">
+                  <Lock className="size-3.5" /> No modules available for your role.
+                </div>
+              )}
+              {pages.map((p) => {
                 const Icon = p.icon;
                 return (
                   <Command.Item
@@ -247,7 +239,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                   >
                     <Icon className="size-4 text-muted-foreground" />
                     <span className="flex-1">{p.label}</span>
-                    <span className="text-[11px] text-muted-foreground font-mono">{p.hint}</span>
+                    <span className="text-[11px] text-muted-foreground font-mono">{p.to}</span>
                   </Command.Item>
                 );
               })}

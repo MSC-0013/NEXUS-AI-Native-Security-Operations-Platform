@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
+import { WorkspaceContext } from "@/components/workspace-context";
 import { makeMetricSeries } from "@/lib/mock/generators";
 import { ChartBar as BarChart3, Shield, TrendingDown, Clock, TriangleAlert as AlertTriangle, CircleCheck as CheckCircle2, DollarSign, Activity } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
@@ -48,6 +49,8 @@ function ExecutiveDashboard() {
         <h1 className="text-xl font-semibold flex items-center gap-2"><BarChart3 className="h-5 w-5 text-primary" />Executive Dashboard</h1>
         <span className="text-[10px] font-mono text-muted-foreground">Last updated: 2m ago</span>
       </div>
+
+      <WorkspaceContext />
 
       {/* Top KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
