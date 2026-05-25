@@ -99,6 +99,8 @@ function searchMatches(query: string, label: string, detail: string): boolean {
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const navigate = useNavigate();
+  const role = useAuth((s) => s.user?.role);
+  const pages = useMemo(() => visibleFeaturesForRole(role), [role]);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
