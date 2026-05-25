@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import { MetricCard } from "@/components/metric-card";
 import { SeverityBadge } from "@/components/severity-badge";
+import { WorkspaceContext } from "@/components/workspace-context";
 import { useInspector } from "@/lib/inspector-store";
 import { SEED_EVENTS, SEED_INCIDENTS, makeMetricSeries } from "@/lib/mock/generators";
 import { useLiveEvents } from "@/lib/realtime";
@@ -72,6 +73,10 @@ function DashboardPage() {
           </button>
         </div>
       </div>
+
+      <WorkspaceContext />
+
+
 
       {/* Metrics grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
