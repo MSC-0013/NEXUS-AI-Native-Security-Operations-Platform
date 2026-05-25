@@ -1,104 +1,24 @@
+import { useEffect, useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Activity, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Bell, BookOpen, Boxes, Briefcase, Cloud, Code, Compass, Cpu, Crosshair, FileSearch, FileText, FingerprintPattern as Fingerprint, Gauge, GitBranch, Globe, KeyRound, LayoutDashboard, ListChecks, Lock, Network, Plug, Rocket, RotateCcw, Settings, Shield, ShieldAlert, Sparkles, Terminal, Users, Workflow } from "lucide-react";
+import { Compass, Globe, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-store";
-import { can, permissionForPath } from "@/lib/rbac";
-
-type NavItem = { to: string; label: string; icon: typeof Gauge };
-type NavGroup = { label: string; items: NavItem[] };
-
-const GROUPS: NavGroup[] = [
-  {
-    label: "Operate",
-    items: [
-      { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
-      { to: "/executive", label: "Executive View", icon: BarChart3 },
-      { to: "/events", label: "Security Events", icon: FileSearch },
-      { to: "/incidents", label: "Incidents", icon: ShieldAlert },
-      { to: "/alerts", label: "Alerts", icon: AlertTriangle },
-      { to: "/notifications", label: "Notifications", icon: Bell },
-      { to: "/cases", label: "Cases", icon: Briefcase },
-    ],
-  },
-  {
-    label: "Detect",
-    items: [
-      { to: "/threat-intelligence", label: "Threat Intel", icon: Activity },
-      { to: "/endpoints", label: "Endpoints", icon: Boxes },
-      { to: "/identity", label: "Identity", icon: Fingerprint },
-      { to: "/cloud-security", label: "Cloud", icon: Cloud },
-      { to: "/vulnerabilities", label: "Vulnerabilities", icon: Shield },
-      { to: "/network", label: "Network", icon: Network },
-    ],
-  },
-  {
-    label: "Investigate",
-    items: [
-      { to: "/attack-graph", label: "Attack Graph", icon: GitBranch },
-      { to: "/copilot", label: "AI Copilot", icon: Sparkles },
-      { to: "/investigations", label: "Investigations", icon: BookOpen },
-      { to: "/hunt", label: "Threat Hunting", icon: Crosshair },
-      { to: "/forensics", label: "Forensics", icon: FileSearch },
-      { to: "/timeline", label: "Timeline", icon: Activity },
-    ],
-  },
-  {
-    label: "Analyze",
-    items: [
-      { to: "/security-graph", label: "Security Graph", icon: Network },
-      { to: "/query", label: "Query Language", icon: Terminal },
-      { to: "/detection-rules", label: "Detection Rules", icon: Shield },
-      { to: "/policies", label: "Policy Engine", icon: ListChecks },
-    ],
-  },
-  {
-    label: "Govern",
-    items: [
-      { to: "/compliance", label: "Compliance", icon: ListChecks },
-      { to: "/audit", label: "Audit Log", icon: KeyRound },
-      { to: "/policies", label: "Policies", icon: Shield },
-      { to: "/sso", label: "SSO & Identity", icon: KeyRound },
-      { to: "/automation", label: "Automation", icon: Workflow },
-      { to: "/ownership", label: "Ownership", icon: Users },
-    ],
-  },
-  {
-    label: "Platform",
-    items: [
-      { to: "/reports", label: "Reports", icon: FileText },
-      { to: "/developer", label: "Developer", icon: Code },
-      { to: "/status", label: "System Status", icon: Activity },
-      { to: "/knowledge", label: "Knowledge Base", icon: BookOpen },
-      { to: "/platform-health", label: "Platform Health", icon: Cpu },
-      { to: "/digital-twin", label: "Digital Twin", icon: Boxes },
-      { to: "/attack-replay", label: "Attack Replay", icon: RotateCcw },
-      { to: "/threat-simulation", label: "Simulation", icon: Crosshair },
-    ],
-  },
-  {
-    label: "Admin",
-    items: [
-      { to: "/settings", label: "Settings", icon: Settings },
-      { to: "/billing", label: "Billing", icon: BarChart3 },
-      { to: "/onboarding", label: "Onboarding", icon: Rocket },
-      { to: "/integrations", label: "Integrations", icon: Plug },
-      { to: "/organizations", label: "Organization", icon: Users },
-    ],
-  },
-];
+import { ROLE_LABEL } from "@/lib/rbac";
+import { useWorkspaceStore } from "@/lib/workspace-store";
+import { visibleGroupsForRole } from "@/lib/workspace-config";
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const role = useAuth((s) => s.user?.role);
+  const active = useWorkspaceStore((s) => s.getActiveWorkspace());
+  const region = useWorkspaceStore((s) => s.region);
 
-  const visibleGroups = GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter((item) => {
-      if (!role) return true;
-      const perm = permissionForPath(item.to);
-      return !perm || can(role, perm);
-    }),
-  })).filter((g) => g.items.length > 0);
+  // Avoid hydration mismatch from persisted auth state — render the full
+  // catalog on the server pass, then filter once mounted.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const visibleGroups = visibleGroupsForRole(mounted ? role : undefined);
 
   return (
     <aside className="hidden md:flex h-screen sticky top-0 w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
@@ -109,18 +29,20 @@ export function AppSidebar() {
         </div>
         <div className="leading-tight">
           <div className="text-sm font-semibold tracking-tight">NEXUS</div>
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Sec Ops</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+            {active.orgName}
+          </div>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-5">
         {visibleGroups.map((group) => (
-          <div key={group.label}>
+          <div key={group.key}>
             <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               {group.label}
             </div>
             <ul className="mt-1 space-y-0.5">
-              {group.items.map((item) => {
+              {group.features.map((item) => {
                 const active = pathname === item.to || pathname.startsWith(item.to + "/");
                 const Icon = item.icon;
                 return (
@@ -145,22 +67,27 @@ export function AppSidebar() {
             </ul>
           </div>
         ))}
-        {visibleGroups.length === 0 && (
+        {mounted && visibleGroups.length === 0 && (
           <div className="px-3 py-4 text-[11px] text-muted-foreground flex items-center gap-2">
-            <Lock className="size-3" /> No modules available for this role.
+            <Lock className="size-3" /> No modules available for {role ? ROLE_LABEL[role] : "this role"}.
           </div>
         )}
       </nav>
 
-      <div className="border-t border-sidebar-border px-3 py-3">
+      <div className="border-t border-sidebar-border px-3 py-3 space-y-1.5">
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono">
           <Globe className="size-3.5 text-healthy" />
-          <span>region us-east-1</span>
+          <span className="truncate">{region}</span>
           <span className="ml-auto inline-flex items-center gap-1">
             <span className="size-1.5 rounded-full bg-healthy pulse-dot text-healthy" />
             Live
           </span>
         </div>
+        {mounted && role && (
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/80">
+            {ROLE_LABEL[role]} · {visibleGroups.reduce((n, g) => n + g.features.length, 0)} modules
+          </div>
+        )}
       </div>
     </aside>
   );
