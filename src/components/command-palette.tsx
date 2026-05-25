@@ -221,9 +221,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               </Command.Group>
             )}
 
-            {/* ---------- Pages ---------- */}
-            <Command.Group heading="Navigate" className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              {PAGES.map((p) => {
+            {/* ---------- Pages (role-filtered) ---------- */}
+            <Command.Group heading={`Navigate · ${pages.length} available`} className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              {pages.length === 0 && (
+                <div className="flex items-center gap-2 rounded-md px-2.5 py-3 text-xs text-muted-foreground">
+                  <Lock className="size-3.5" /> No modules available for your role.
+                </div>
+              )}
+              {pages.map((p) => {
                 const Icon = p.icon;
                 return (
                   <Command.Item
@@ -234,7 +239,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                   >
                     <Icon className="size-4 text-muted-foreground" />
                     <span className="flex-1">{p.label}</span>
-                    <span className="text-[11px] text-muted-foreground font-mono">{p.hint}</span>
+                    <span className="text-[11px] text-muted-foreground font-mono">{p.to}</span>
                   </Command.Item>
                 );
               })}
