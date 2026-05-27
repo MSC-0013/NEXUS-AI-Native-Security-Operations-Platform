@@ -107,7 +107,7 @@ const ANALYZE_READ: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   super_admin: ALL,
-  security_admin: ALL.filter((p) => p !== "manage:org"),
+  security_admin: ALL.filter((p) => p !== "manage:org" && p !== "manage:accounts" ? true : p === "manage:accounts"),
   soc_analyst: [
     ...OPERATE_READ, "act:incidents",
     ...DETECT_READ,
@@ -131,7 +131,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   compliance_officer: [
     "view:dashboard", "view:executive",
     "view:compliance", "view:audit", "view:policies", "view:ownership",
-    "view:reports", "view:knowledge",
+    "view:reports", "view:knowledge", "view:access-matrix",
   ],
   viewer: [
     "view:dashboard", "view:events", "view:incidents", "view:alerts", "view:notifications",
