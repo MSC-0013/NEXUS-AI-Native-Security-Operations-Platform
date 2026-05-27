@@ -76,7 +76,9 @@ export type Permission =
   | "manage:billing"
   | "view:onboarding"
   | "manage:integrations"
-  | "manage:org";
+  | "manage:org"
+  | "manage:accounts"
+  | "view:access-matrix";
 
 const ALL: Permission[] = [
   "view:dashboard", "view:executive", "view:events", "view:incidents", "act:incidents",
@@ -87,7 +89,7 @@ const ALL: Permission[] = [
   "view:compliance", "view:audit", "view:sso", "view:automation", "view:ownership",
   "view:reports", "view:developer", "view:status", "view:knowledge", "view:platform-health",
   "view:digital-twin", "view:attack-replay", "view:threat-simulation",
-  "manage:settings", "manage:billing", "view:onboarding", "manage:integrations", "manage:org",
+  "manage:settings", "manage:billing", "view:onboarding", "manage:integrations", "manage:org", "manage:accounts", "view:access-matrix",
 ];
 
 const OPERATE_READ: Permission[] = [
@@ -129,7 +131,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   compliance_officer: [
     "view:dashboard", "view:executive",
     "view:compliance", "view:audit", "view:policies", "view:ownership",
-    "view:reports", "view:knowledge",
+    "view:reports", "view:knowledge", "view:access-matrix",
   ],
   viewer: [
     "view:dashboard", "view:events", "view:incidents", "view:alerts", "view:notifications",
@@ -184,6 +186,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission> = {
   "/onboarding": "view:onboarding",
   "/integrations": "manage:integrations",
   "/organizations": "manage:org",
+  "/access-matrix": "view:access-matrix",
 };
 
 export function permissionForPath(pathname: string): Permission | null {

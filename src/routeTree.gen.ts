@@ -55,6 +55,7 @@ import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppAttackReplayRouteImport } from './routes/_app.attack-replay'
 import { Route as AppAttackGraphRouteImport } from './routes/_app.attack-graph'
 import { Route as AppAlertsRouteImport } from './routes/_app.alerts'
+import { Route as AppAccessMatrixRouteImport } from './routes/_app.access-matrix'
 import { Route as AppIncidentsIncidentIdRouteImport } from './routes/_app.incidents.$incidentId'
 
 const LoginRoute = LoginRouteImport.update({
@@ -286,6 +287,11 @@ const AppAlertsRoute = AppAlertsRouteImport.update({
   path: '/alerts',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAccessMatrixRoute = AppAccessMatrixRouteImport.update({
+  id: '/access-matrix',
+  path: '/access-matrix',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppIncidentsIncidentIdRoute = AppIncidentsIncidentIdRouteImport.update({
   id: '/$incidentId',
   path: '/$incidentId',
@@ -296,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/landing': typeof LandingRoute
   '/login': typeof LoginRoute
+  '/access-matrix': typeof AppAccessMatrixRoute
   '/alerts': typeof AppAlertsRoute
   '/attack-graph': typeof AppAttackGraphRoute
   '/attack-replay': typeof AppAttackReplayRoute
@@ -344,6 +351,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/landing': typeof LandingRoute
   '/login': typeof LoginRoute
+  '/access-matrix': typeof AppAccessMatrixRoute
   '/alerts': typeof AppAlertsRoute
   '/attack-graph': typeof AppAttackGraphRoute
   '/attack-replay': typeof AppAttackReplayRoute
@@ -394,6 +402,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/landing': typeof LandingRoute
   '/login': typeof LoginRoute
+  '/_app/access-matrix': typeof AppAccessMatrixRoute
   '/_app/alerts': typeof AppAlertsRoute
   '/_app/attack-graph': typeof AppAttackGraphRoute
   '/_app/attack-replay': typeof AppAttackReplayRoute
@@ -444,6 +453,7 @@ export interface FileRouteTypes {
     | '/'
     | '/landing'
     | '/login'
+    | '/access-matrix'
     | '/alerts'
     | '/attack-graph'
     | '/attack-replay'
@@ -492,6 +502,7 @@ export interface FileRouteTypes {
     | '/'
     | '/landing'
     | '/login'
+    | '/access-matrix'
     | '/alerts'
     | '/attack-graph'
     | '/attack-replay'
@@ -541,6 +552,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/landing'
     | '/login'
+    | '/_app/access-matrix'
     | '/_app/alerts'
     | '/_app/attack-graph'
     | '/_app/attack-replay'
@@ -917,6 +929,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/access-matrix': {
+      id: '/_app/access-matrix'
+      path: '/access-matrix'
+      fullPath: '/access-matrix'
+      preLoaderRoute: typeof AppAccessMatrixRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/incidents/$incidentId': {
       id: '/_app/incidents/$incidentId'
       path: '/$incidentId'
@@ -940,6 +959,7 @@ const AppIncidentsRouteWithChildren = AppIncidentsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
+  AppAccessMatrixRoute: typeof AppAccessMatrixRoute
   AppAlertsRoute: typeof AppAlertsRoute
   AppAttackGraphRoute: typeof AppAttackGraphRoute
   AppAttackReplayRoute: typeof AppAttackReplayRoute
@@ -985,6 +1005,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccessMatrixRoute: AppAccessMatrixRoute,
   AppAlertsRoute: AppAlertsRoute,
   AppAttackGraphRoute: AppAttackGraphRoute,
   AppAttackReplayRoute: AppAttackReplayRoute,

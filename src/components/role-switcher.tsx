@@ -1,18 +1,11 @@
 import { useState } from "react";
-import { Check, ChevronDown, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, ShieldCheck, Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth-store";
 import { ROLE_LABEL, ROLE_DESCRIPTION, ROLE_PERMISSIONS, type Role } from "@/lib/rbac";
+import { ROLES_BY_RANK, ROLE_RANK, canManageRole } from "@/lib/role-hierarchy";
 import { cn } from "@/lib/utils";
 
-const ROLES: Role[] = [
-  "super_admin",
-  "security_admin",
-  "soc_analyst",
-  "threat_hunter",
-  "incident_responder",
-  "compliance_officer",
-  "viewer",
-];
+const ROLES: Role[] = ROLES_BY_RANK;
 
 export function RoleSwitcher() {
   const [open, setOpen] = useState(false);
@@ -41,21 +34,33 @@ export function RoleSwitcher() {
             <ul className="max-h-80 overflow-y-auto py-1">
               {ROLES.map((r) => {
                 const active = user.role === r;
+                // Allow assuming any role at or below your rank (super_admin can assume any).
+                const allowed = active || canManageRole(user.role, r) || user.role === r;
                 return (
                   <li key={r}>
                     <button
+                      disabled={!allowed}
                       onClick={() => {
+                        if (!allowed) return;
                         setRole(r);
                         setOpen(false);
                       }}
                       className={cn(
-                        "w-full text-left px-3 py-2 hover:bg-surface flex items-start gap-2",
+                        "w-full text-left px-3 py-2 flex items-start gap-2",
+                        allowed ? "hover:bg-surface" : "opacity-40 cursor-not-allowed",
                         active && "bg-surface/70",
                       )}
                     >
-                      <Check className={cn("mt-0.5 size-3.5 shrink-0", active ? "text-primary" : "text-transparent")} />
-                      <div className="min-w-0">
-                        <div className="text-[12px] font-medium">{ROLE_LABEL[r]}</div>
+                      {allowed ? (
+                        <Check className={cn("mt-0.5 size-3.5 shrink-0", active ? "text-primary" : "text-transparent")} />
+                      ) : (
+                        <Lock className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[12px] font-medium truncate">{ROLE_LABEL[r]}</div>
+                          <div className="text-[10px] font-mono text-muted-foreground">r{ROLE_RANK[r]}</div>
+                        </div>
                         <div className="text-[10px] text-muted-foreground">{ROLE_DESCRIPTION[r]}</div>
                         <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
                           {ROLE_PERMISSIONS[r].length} permissions
