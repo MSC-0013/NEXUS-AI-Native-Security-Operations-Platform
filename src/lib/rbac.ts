@@ -107,7 +107,7 @@ const ANALYZE_READ: Permission[] = [
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   super_admin: ALL,
-  security_admin: ALL.filter((p) => p !== "manage:org" && p !== "manage:accounts" ? true : p === "manage:accounts"),
+  security_admin: ALL.filter((p) => p !== "manage:org"),
   soc_analyst: [
     ...OPERATE_READ, "act:incidents",
     ...DETECT_READ,
@@ -186,6 +186,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission> = {
   "/onboarding": "view:onboarding",
   "/integrations": "manage:integrations",
   "/organizations": "manage:org",
+  "/access-matrix": "view:access-matrix",
 };
 
 export function permissionForPath(pathname: string): Permission | null {
