@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
-import { Bell, Circle as CircleHelp, Clock, Command as CmdIcon, Search } from "lucide-react";
+import { Bell, Circle as CircleHelp, Clock, Command as CmdIcon, Search, Check, Trash2, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-store";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { CommandPalette } from "./command-palette";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 import { RoleSwitcher } from "./role-switcher";
 import { useConnectionState, useHeartbeat, useStreamStats } from "@/lib/realtime";
+import { useNotifications } from "@/lib/notifications-store";
+import { timeAgo } from "@/lib/profile-store";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "@tanstack/react-router";
 
 const RANGES = ["15m", "1h", "24h", "7d", "30d"];
 
-const UNREAD_COUNT = 7;
 
 export function AppTopbar() {
   const [open, setOpen] = useState(false);
@@ -21,6 +23,9 @@ export function AppTopbar() {
   const connection = useConnectionState();
   const stats = useStreamStats();
   const navigate = useNavigate();
+  const notifs = useNotifications((s) => s.items);
+  const unread = notifs.filter((n) => !n.read).length;
+
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -96,15 +101,10 @@ export function AppTopbar() {
 
           <RoleSwitcher />
 
-          {/* Notification bell with badge */}
-          <button className="relative grid size-9 place-items-center rounded-md border border-border bg-surface/60 text-muted-foreground hover:text-foreground">
-            <Bell className="size-4" />
-            {UNREAD_COUNT > 0 && (
-              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-                {UNREAD_COUNT}
-              </span>
-            )}
-          </button>
+          {/* Notification bell with popover */}
+          <NotificationsBell unread={unread} navigate={navigate} />
+
+
 
           {/* Help icon with "What's new" dot */}
           <button className="relative grid size-9 place-items-center rounded-md border border-border bg-surface/60 text-muted-foreground hover:text-foreground">
