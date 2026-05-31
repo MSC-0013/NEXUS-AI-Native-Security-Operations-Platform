@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Search, Star } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
-import { SEED_INCIDENTS } from "@/lib/mock/generators";
+
 import { useInspector } from "@/lib/inspector-store";
 import { useIncidentStore } from "@/lib/incident-store";
 import { useIncidents } from "@/lib/api-hooks";
@@ -63,7 +63,7 @@ function IncidentsPage() {
     }));
   }, [apiData, apiError]);
 
-  const baseIncidents = user && apiIncidents.length > 0 ? apiIncidents : SEED_INCIDENTS;
+  const baseIncidents = apiIncidents;
 
   const merged: Incident[] = useMemo(
     () => baseIncidents.map((i) => ({

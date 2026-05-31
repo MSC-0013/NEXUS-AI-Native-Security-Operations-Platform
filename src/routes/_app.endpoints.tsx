@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Laptop, ShieldCheck, Cpu, HardDrive, WifiOff, TriangleAlert as AlertTriangle, Lock, Clock as Unlock, Network, Activity, Monitor, MailWarning as FileWarning, UserCheck, Globe, ChevronRight, ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useEndpoints } from "@/lib/api-hooks";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { useInspector } from "@/lib/inspector-store";
@@ -69,18 +69,7 @@ interface RiskBreakdown {
 // Seed data (deterministic)
 // ---------------------------------------------------------------------------
 
-const ENDPOINTS: Endpoint[] = [
-  { id: "ep-1", hostname: "web-prod-12.nyc", os: "Ubuntu 22.04", user: "svc-nginx", agentVersion: "14.2.1", riskScore: 94, status: "online", lastCheckIn: new Date(Date.now() - 2 * 60_000) },
-  { id: "ep-2", hostname: "finance-laptop-08", os: "Windows 11", user: "k.morgan", agentVersion: "14.1.3", riskScore: 87, status: "online", lastCheckIn: new Date(Date.now() - 4 * 60_000) },
-  { id: "ep-3", hostname: "build-runner-44", os: "Debian 12", user: "ci-bot", agentVersion: "14.2.0", riskScore: 78, status: "online", lastCheckIn: new Date(Date.now() - 11 * 60_000) },
-  { id: "ep-4", hostname: "mac-design-21", os: "macOS 14.5", user: "j.lee", agentVersion: "14.2.1", riskScore: 56, status: "online", lastCheckIn: new Date(Date.now() - 32 * 60_000) },
-  { id: "ep-5", hostname: "legacy-fileshare-02", os: "Windows Server 2016", user: "---", agentVersion: "13.8.2", riskScore: 71, status: "offline", lastCheckIn: new Date(Date.now() - 7 * 86400_000) },
-  { id: "ep-6", hostname: "k8s-node-prod-09", os: "Bottlerocket", user: "kubelet", agentVersion: "14.2.1", riskScore: 34, status: "online", lastCheckIn: new Date(Date.now() - 60_000) },
-  { id: "ep-7", hostname: "win-hr-laptop-03", os: "Windows 11", user: "t.nguyen", agentVersion: "14.1.3", riskScore: 92, status: "quarantined", lastCheckIn: new Date(Date.now() - 15 * 60_000) },
-  { id: "ep-8", hostname: "db-replica-eu-01", os: "RHEL 9", user: "postgres", agentVersion: "14.2.0", riskScore: 22, status: "online", lastCheckIn: new Date(Date.now() - 90_000) },
-  { id: "ep-9", hostname: "dev-sandbox-17", os: "Arch Linux", user: "m.chen", agentVersion: "14.2.1", riskScore: 45, status: "online", lastCheckIn: new Date(Date.now() - 5 * 60_000) },
-  { id: "ep-10", hostname: "pos-terminal-14", os: "Windows 10 IoT", user: "retail-svc", agentVersion: "13.9.1", riskScore: 68, status: "offline", lastCheckIn: new Date(Date.now() - 3 * 86400_000) },
-];
+
 
 const PROCESS_TREES: Record<string, ProcessNode> = {
   "ep-1": {
@@ -253,6 +242,22 @@ function EndpointsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [quarantineConfirm, setQuarantineConfirm] = useState<string | null>(null);
   const [networkBlock, setNetworkBlock] = useState<Record<string, boolean>>({ "ep-7": true });
+  const { data: apiEndpoints } = useEndpoints();
+  const rawEndpoints = useMemo<Endpoint[]>(() => {
+    if (!apiEndpoints?.items) return [];
+    return apiEndpoints.items.map(e => ({
+      id: e.id,
+      hostname: e.hostname,
+      os: e.os,
+      user: e.ip || "—",
+      agentVersion: e.agentVersion,
+      riskScore: e.riskScore,
+      status: e.isolated ? "quarantined" : (e.status as EndpointStatus),
+      lastCheckIn: new Date(e.lastCheckIn),
+    }));
+  }, [apiEndpoints]);
+
+  const ENDPOINTS = rawEndpoints;
   const inspector = useInspector();
 
   const selected = ENDPOINTS.find((e) => e.id === selectedId) ?? null;
@@ -290,9 +295,9 @@ function EndpointsPage() {
 
       {/* ---- KPI cards ---- */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricCard label="Total" value={total} icon={Laptop} tone="default" series={makeMetricSeries(48, total, 2)} />
-        <MetricCard label="Healthy" value={healthy} icon={ShieldCheck} tone="healthy" series={makeMetricSeries(48, healthy, 1)} />
-        <MetricCard label="At Risk" value={atRisk} icon={AlertTriangle} tone="high" series={makeMetricSeries(48, atRisk, 3)} delta={{ v: "4%", up: true }} />
+        <MetricCard label="Total" value={total} icon={Laptop} tone="default" />
+        <MetricCard label="Healthy" value={healthy} icon={ShieldCheck} tone="healthy" />
+        <MetricCard label="At Risk" value={atRisk} icon={AlertTriangle} tone="high" delta={{ v: "4%", up: true }} />
         <MetricCard label="Offline" value={offline} icon={WifiOff} tone="info" />
         <MetricCard label="Quarantined" value={quarantined} icon={Lock} tone="critical" />
       </div>

@@ -72,15 +72,25 @@ INSERT INTO incidents (
   'Build-runner OIDC principal received admin role binding during maintenance freeze window.'
 ) ON CONFLICT (incident_code) DO NOTHING;
 
-INSERT INTO incident_timeline (incident_id, timestamp, actor_type, actor_name, action_type, description) VALUES
-  ('00000000-0000-0000-0000-000000000100', NOW() - INTERVAL '3 hours', 'system', 'CloudTrail', 'detected', 'Anomalous IAM AttachRolePolicy event detected'),
-  ('00000000-0000-0000-0000-000000000100', NOW() - INTERVAL '2 hours', 'user', 'Amelia Lee', 'assigned', 'Incident assigned to SOC tier-2'),
-  ('00000000-0000-0000-0000-000000000100', NOW() - INTERVAL '1 hour', 'ai', 'NEXUS Copilot', 'analysis', 'Blast radius: aws-prod root + secrets-vault reachable');
+INSERT INTO incident_timeline (incident_id, timestamp, actor_type, actor_name, action_type, description)
+SELECT i.id, NOW() - INTERVAL '3 hours', 'system', 'CloudTrail', 'detected', 'Anomalous IAM AttachRolePolicy event detected'
+FROM incidents i WHERE i.incident_code = 'INC-1042'
+UNION ALL
+SELECT i.id, NOW() - INTERVAL '2 hours', 'user', 'Amelia Lee', 'assigned', 'Incident assigned to SOC tier-2'
+FROM incidents i WHERE i.incident_code = 'INC-1042'
+UNION ALL
+SELECT i.id, NOW() - INTERVAL '1 hour', 'ai', 'NEXUS Copilot', 'analysis', 'Blast radius: aws-prod root + secrets-vault reachable'
+FROM incidents i WHERE i.incident_code = 'INC-1042';
 
-INSERT INTO incident_recommendations (incident_id, content, order_index) VALUES
-  ('00000000-0000-0000-0000-000000000100', 'Revoke role binding on build-runner-44 OIDC principal', 0),
-  ('00000000-0000-0000-0000-000000000100', 'Rotate trust policy on aws-prod root account', 1),
-  ('00000000-0000-0000-0000-000000000100', 'Force re-auth on all linked Okta identities', 2);
+INSERT INTO incident_recommendations (incident_id, content, order_index)
+SELECT i.id, 'Revoke role binding on build-runner-44 OIDC principal', 0
+FROM incidents i WHERE i.incident_code = 'INC-1042'
+UNION ALL
+SELECT i.id, 'Rotate trust policy on aws-prod root account', 1
+FROM incidents i WHERE i.incident_code = 'INC-1042'
+UNION ALL
+SELECT i.id, 'Force re-auth on all linked Okta identities', 2
+FROM incidents i WHERE i.incident_code = 'INC-1042';
 
 -- Sample endpoints
 INSERT INTO endpoints (

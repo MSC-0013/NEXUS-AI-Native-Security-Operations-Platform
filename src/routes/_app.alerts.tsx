@@ -5,7 +5,7 @@ import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { Bell, BellRing, ListFilter as Filter, CircleCheck as CheckCircle2, TriangleAlert as AlertTriangle, Clock, VolumeX, Zap, Timer, ArrowRight, Mail, MessageSquare, Radio, Globe, Shield, ChevronDown, EyeOff, Sparkles } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useAlerts } from "@/lib/api-hooks";
 import { Switch } from "@/components/ui/switch";
 import { useInspector } from "@/lib/inspector-store";
 import type { Severity } from "@/lib/mock/types";
@@ -34,18 +34,7 @@ interface Alert {
   aiReason: string;
 }
 
-const ALERTS: Alert[] = [
-  { id: "ALT-4921", title: "EDR-2001 LSASS access on web-prod-12", source: "edr-falconlite", owner: "soc-tier2", age: new Date(Date.now() - 4 * 60_000), state: "OPEN", severity: "critical", dedupCount: 14, aiScore: 97, aiReason: "Credential dumping T1003" },
-  { id: "ALT-4920", title: "AUTH-220 Brute force from 185.220.x.x", source: "okta", owner: "\u2014", age: new Date(Date.now() - 8 * 60_000), state: "OPEN", severity: "high", dedupCount: 38, aiScore: 89, aiReason: "Known botnet ASN" },
-  { id: "ALT-4919", title: "CLOUD-IAM-9 Wildcard policy attached", source: "aws-cloudtrail", owner: "cloud-ops", age: new Date(Date.now() - 12 * 60_000), state: "TRIAGE", severity: "high", dedupCount: 3, aiScore: 82, aiReason: "Privilege escalation path" },
-  { id: "ALT-4918", title: "DNS-77 DGA pattern from finance-laptop-08", source: "zeek", owner: "soc-tier1", age: new Date(Date.now() - 21 * 60_000), state: "OPEN", severity: "medium", dedupCount: 7, aiScore: 71, aiReason: "DGA beaconing confidence" },
-  { id: "ALT-4917", title: "K8S-14 Privileged container in prod-payments", source: "k8s-audit", owner: "platform", age: new Date(Date.now() - 34 * 60_000), state: "ACK", severity: "medium", dedupCount: 2, aiScore: 65, aiReason: "Container escape risk" },
-  { id: "ALT-4916", title: "EDR-1042 Office spawned powershell.exe", source: "edr-falconlite", owner: "soc-tier1", age: new Date(Date.now() - 63 * 60_000), state: "ACK", severity: "high", dedupCount: 11, aiScore: 78, aiReason: "LOLBAS execution chain" },
-  { id: "ALT-4915", title: "GH-AUDIT-3 New deploy key on infra/terraform", source: "github-audit", owner: "secops", age: new Date(Date.now() - 134 * 60_000), state: "OPEN", severity: "info", dedupCount: 1, aiScore: 34, aiReason: "Low risk repo change" },
-  { id: "ALT-4914", title: "NET-512 Outbound to known C2 45.33.x.x", source: "suricata", owner: "soc-tier2", age: new Date(Date.now() - 3 * 60_000), state: "OPEN", severity: "critical", dedupCount: 22, aiScore: 99, aiReason: "Confirmed C2 indicator" },
-  { id: "ALT-4913", title: "AZURE-AD Impossible travel for exec account", source: "azure-ad", owner: "\u2014", age: new Date(Date.now() - 17 * 60_000), state: "OPEN", severity: "high", dedupCount: 5, aiScore: 85, aiReason: "Geolocation anomaly" },
-  { id: "ALT-4912", title: "RANSOM-31 Mass rename burst on fileshare-02", source: "edr-falconlite", owner: "soc-tier2", age: new Date(Date.now() - 2 * 60_000), state: "TRIAGE", severity: "critical", dedupCount: 9, aiScore: 96, aiReason: "Ransomware T1486 match" },
-];
+
 
 interface SuppressionRule {
   name: string;
@@ -166,12 +155,29 @@ function AlertsPage() {
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const openInspector = useInspector((s) => s.open);
 
+  const { data: apiAlerts } = useAlerts({ limit: 100 });
+  const rawAlerts = useMemo<Alert[]>(() => {
+    if (!apiAlerts?.items) return [];
+    return apiAlerts.items.map((a) => ({
+      id: a.id,
+      title: a.rule,
+      source: a.source,
+      owner: a.owner ?? "—",
+      age: new Date(a.createdAt),
+      state: (a.suppressed ? "SNOOZED" : a.acknowledged ? "ACK" : a.escalated ? "TRIAGE" : "OPEN") as AlertState,
+      severity: a.severity,
+      dedupCount: a.dedupCount,
+      aiScore: a.aiPriorityScore,
+      aiReason: a.description ?? "Alert triggered",
+    }));
+  }, [apiAlerts]);
+
   const enrichedAlerts = useMemo(() =>
-    ALERTS.map((a) => ({
+    rawAlerts.map((a) => ({
       ...a,
       state: mutedIds.has(a.id) ? "MUTED" as AlertState : snoozedIds.has(a.id) ? "SNOOZED" as AlertState : a.state,
     })),
-    [mutedIds, snoozedIds],
+    [rawAlerts, mutedIds, snoozedIds],
   );
 
   const filteredAlerts = useMemo(() => {
@@ -179,18 +185,14 @@ function AlertsPage() {
     return enrichedAlerts.filter((a) => a.severity === severityFilter);
   }, [enrichedAlerts, severityFilter]);
 
-  const totalDedup = useMemo(() => ALERTS.reduce((s, a) => s + a.dedupCount, 0), []);
-  const autoSuppressed = useMemo(() => ALERTS.filter((a) => a.dedupCount > 10).length, []);
-
-  /* KPI series (static so they don't re-generate) */
-  const activeSeries = useMemo(() => makeMetricSeries(48, 1200, 80), []);
-  const ackSeries = useMemo(() => makeMetricSeries(48, 400, 40), []);
+  const totalDedup = useMemo(() => rawAlerts.reduce((s, a) => s + a.dedupCount, 0), [rawAlerts]);
+  const autoSuppressed = useMemo(() => rawAlerts.filter((a) => a.dedupCount > 10).length, [rawAlerts]);
 
   const kpis = [
-    { label: "Active", value: 1247, icon: BellRing, tone: "critical" as const, series: activeSeries, delta: { v: "12%", up: true } },
-    { label: "Acknowledged", value: 412, icon: CheckCircle2, tone: "healthy" as const, series: ackSeries },
+    { label: "Active", value: rawAlerts.length, icon: BellRing, tone: "critical" as const, delta: { v: "12%", up: true } },
+    { label: "Acknowledged", value: rawAlerts.filter(a => a.state === "ACK").length, icon: CheckCircle2, tone: "healthy" as const },
     { label: "Avg ack time", value: "3m 12s", icon: Clock, tone: "info" as const },
-    { label: "Suppressed", value: 89, icon: Filter, tone: "default" as const },
+    { label: "Suppressed", value: rawAlerts.filter(a => a.state === "SNOOZED").length, icon: Filter, tone: "default" as const },
     { label: "SLA breaches", value: 7, icon: AlertTriangle, tone: "high" as const },
   ];
 

@@ -149,12 +149,24 @@ export const CopilotMessageCreateSchema = z.object({
 export type CopilotMessageCreate = z.infer<typeof CopilotMessageCreateSchema>;
 
 export const DashboardStatsSchema = z.object({
-  openIncidents: z.number(),
-  criticalAlerts: z.number(),
-  eventsLast24h: z.number(),
-  meanTimeToDetect: z.number(),
-  endpointsAtRisk: z.number(),
-  complianceScore: z.number(),
+  activeThreatCount: z.number(),
+  threatScore: z.number(),
+  endpointHealthPct: z.number(),
+  openVulns: z.number(),
+  activeIncidents: z.number(),
+  blockedAttacks24h: z.number(),
+  cloudRiskScore: z.number(),
+  identityRiskScore: z.number(),
+  threatTrend: z.array(z.object({
+    h: z.string(),
+    critical: z.number(),
+    high: z.number(),
+    medium: z.number(),
+  })),
+  detectionsByType: z.array(z.object({
+    type: z.string(),
+    count: z.number(),
+  })),
 });
 export type DashboardStats = z.infer<typeof DashboardStatsSchema>;
 

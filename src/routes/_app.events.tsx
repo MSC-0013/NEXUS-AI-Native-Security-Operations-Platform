@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { ListFilter as Filter, Pause, Play, Search } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
-import { SEED_EVENTS } from "@/lib/mock/generators";
+
 import { useInspector } from "@/lib/inspector-store";
 import { useLiveEvents } from "@/lib/realtime";
 import { useEvents } from "@/lib/api-hooks";
@@ -57,7 +57,7 @@ function EventsPage() {
   }, [apiData, apiError]);
 
   const merged = useMemo<SecurityEvent[]>(() => {
-    const base = user && apiEvents.length > 0 ? apiEvents : SEED_EVENTS;
+    const base = apiEvents;
     return streamOn ? [...live, ...base] : base;
   }, [live, streamOn, apiEvents, user]);
 

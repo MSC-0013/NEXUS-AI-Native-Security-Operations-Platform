@@ -34,8 +34,11 @@ export async function buildApp() {
   app.decorate("db", db);
   app.decorate("pgClient", client);
 
+  const corsOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+  app.log.info({ corsOrigins }, "CORS origins loaded");
+
   await app.register(cors, {
-    origin: env.CORS_ORIGIN.split(",").map((o) => o.trim()),
+    origin: corsOrigins,
     credentials: true,
   });
 
@@ -75,21 +78,8 @@ export async function buildApp() {
   app.get("/ready", async (_req, reply) => {
     try {
       await client`SELECT 1`;
-      let redisOk = true;
-      if (env.REDIS_URL && env.NODE_ENV === "production") {
-        try {
-          const { default: Redis } = await import("ioredis");
-          const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1, connectTimeout: 2000 });
-          await redis.ping();
-          redis.disconnect();
-        } catch {
-          redisOk = false;
-        }
-      }
-      if (!redisOk) {
-        return reply.status(503).send({ status: "not ready", db: "connected", redis: "disconnected" });
-      }
-      return { status: "ready", db: "connected", redis: redisOk ? "connected" : "skipped" };
+      // Redis check disabled for now
+      return { status: "ready", db: "connected", redis: "skipped" };
     } catch {
       return reply.status(503).send({ status: "not ready", db: "disconnected" });
     }

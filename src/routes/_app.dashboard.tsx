@@ -9,7 +9,7 @@ import { MetricCard } from "@/components/metric-card";
 import { SeverityBadge } from "@/components/severity-badge";
 import { WorkspaceContext } from "@/components/workspace-context";
 import { useInspector } from "@/lib/inspector-store";
-import { SEED_EVENTS, SEED_INCIDENTS, makeMetricSeries } from "@/lib/mock/generators";
+
 import { useLiveEvents } from "@/lib/realtime";
 import { useDashboardStats, useIncidents } from "@/lib/api-hooks";
 import { useAuth } from "@/lib/auth-store";
@@ -32,34 +32,9 @@ function DashboardPage() {
   const { events: live, status: streamStatus } = useLiveEvents(40, 1400);
   const openInspector = useInspector((s) => s.open);
 
-  const metricSeries = useMemo(() => ({
-    threats: makeMetricSeries(36, 60, 14),
-    score: makeMetricSeries(36, 78, 6),
-    endpoints: makeMetricSeries(36, 92, 3),
-    vulns: makeMetricSeries(36, 240, 12),
-    incidents: makeMetricSeries(36, 8, 3),
-    blocked: makeMetricSeries(36, 1800, 200),
-    cloud: makeMetricSeries(36, 64, 5),
-    identity: makeMetricSeries(36, 71, 7),
-  }), []);
 
-  const threatTrend = useMemo(() => Array.from({ length: 24 }, (_, i) => ({
-    h: `${i.toString().padStart(2, "0")}:00`,
-    critical: Math.round(Math.random() * 8 + (i > 10 && i < 18 ? 6 : 0)),
-    high: Math.round(Math.random() * 14 + 4),
-    medium: Math.round(Math.random() * 20 + 8),
-  })), []);
 
-  const byType = useMemo(() => {
-    const counts: Record<string, number> = {};
-    SEED_EVENTS.forEach((e) => { counts[e.type] = (counts[e.type] ?? 0) + 1; });
-    return Object.entries(counts)
-      .map(([type, count]) => ({ type: type.replace(/_/g, " "), count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, []);
-
-  const recentIncidents = user && apiIncidents?.items?.length
+  const recentIncidents = apiIncidents?.items?.length
     ? apiIncidents.items.map((i) => ({
         id: i.id,
         code: i.code,
@@ -79,7 +54,7 @@ function DashboardPage() {
         recommendations: i.recommendations,
         linkedEventIds: i.linkedEventIds,
       }))
-    : SEED_INCIDENTS.slice(0, 6);
+    : [];
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -105,14 +80,14 @@ function DashboardPage() {
 
       {/* Metrics grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Active Threats" value={47} delta={{ v: "12%", up: true }} icon={ShieldAlert} tone="critical" series={metricSeries.threats} />
-        <MetricCard label="Threat Score" value="78 / 100" delta={{ v: "4 pts", up: true }} icon={Gauge} tone="high" series={metricSeries.score} />
-        <MetricCard label="Endpoint Health" value="98.4%" delta={{ v: "0.2%", up: false }} icon={ShieldCheck} tone="healthy" series={metricSeries.endpoints} />
-        <MetricCard label="Open Vulnerabilities" value={244} delta={{ v: "8", up: false }} icon={Boxes} tone="info" series={metricSeries.vulns} />
-        <MetricCard label="Active Incidents" value={12} delta={{ v: "3", up: true }} icon={AlertTriangle} tone="critical" series={metricSeries.incidents} />
-        <MetricCard label="Blocked Attacks (24h)" value="1,948" delta={{ v: "11%", up: true }} icon={Zap} tone="default" series={metricSeries.blocked} />
-        <MetricCard label="Cloud Risk Score" value={64} delta={{ v: "2", up: false }} icon={Cloud} tone="info" series={metricSeries.cloud} />
-        <MetricCard label="Identity Risk Score" value={71} delta={{ v: "5", up: true }} icon={Fingerprint} tone="high" series={metricSeries.identity} />
+        <MetricCard label="Active Threats" value={stats?.activeThreatCount ?? 0} delta={{ v: "12%", up: true }} icon={ShieldAlert} tone="critical" />
+        <MetricCard label="Threat Score" value={`${stats?.threatScore ?? 0} / 100`} delta={{ v: "4 pts", up: true }} icon={Gauge} tone="high" />
+        <MetricCard label="Endpoint Health" value={`${stats?.endpointHealthPct ?? 0}%`} delta={{ v: "0.2%", up: false }} icon={ShieldCheck} tone="healthy" />
+        <MetricCard label="Open Vulnerabilities" value={stats?.openVulns ?? 0} delta={{ v: "8", up: false }} icon={Boxes} tone="info" />
+        <MetricCard label="Active Incidents" value={stats?.activeIncidents ?? 0} delta={{ v: "3", up: true }} icon={AlertTriangle} tone="critical" />
+        <MetricCard label="Blocked Attacks (24h)" value={(stats?.blockedAttacks24h ?? 0).toLocaleString()} delta={{ v: "11%", up: true }} icon={Zap} tone="default" />
+        <MetricCard label="Cloud Risk Score" value={stats?.cloudRiskScore ?? 0} delta={{ v: "2", up: false }} icon={Cloud} tone="info" />
+        <MetricCard label="Identity Risk Score" value={stats?.identityRiskScore ?? 0} delta={{ v: "5", up: true }} icon={Fingerprint} tone="high" />
       </div>
 
       {/* Charts row */}
@@ -131,7 +106,7 @@ function DashboardPage() {
           </div>
           <div className="h-64">
             <ResponsiveContainer>
-              <AreaChart data={threatTrend} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
+              <AreaChart data={stats?.threatTrend ?? []} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="g-crit" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="oklch(0.62 0.23 25)" stopOpacity={0.5} />
@@ -171,7 +146,7 @@ function DashboardPage() {
           </div>
           <div className="h-64">
             <ResponsiveContainer>
-              <BarChart data={byType} layout="vertical" margin={{ left: 10, right: 8, top: 0, bottom: 0 }}>
+              <BarChart data={stats?.detectionsByType ?? []} layout="vertical" margin={{ left: 10, right: 8, top: 0, bottom: 0 }}>
                 <CartesianGrid stroke="oklch(0.30 0.014 250 / 0.25)" horizontal={false} />
                 <XAxis type="number" stroke="oklch(0.55 0.015 245)" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis type="category" dataKey="type" stroke="oklch(0.7 0.01 245)" fontSize={10} tickLine={false} axisLine={false} width={110} />

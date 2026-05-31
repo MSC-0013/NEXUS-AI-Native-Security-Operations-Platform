@@ -105,28 +105,28 @@ CREATE INDEX IF NOT EXISTS idx_events_org_ts ON security_events(organization_id,
 CREATE INDEX IF NOT EXISTS idx_alerts_open ON alerts(organization_id, created_at DESC) WHERE status NOT IN ('resolved', 'suppressed');
 CREATE INDEX IF NOT EXISTS idx_incidents_open ON incidents(organization_id, opened_at DESC) WHERE status NOT IN ('closed', 'recovered');
 
--- pgvector for RAG (optional — requires pgvector extension)
-CREATE EXTENSION IF NOT EXISTS vector;
+-- -- pgvector for RAG (optional — requires pgvector extension)
+-- CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE IF NOT EXISTS document_embeddings (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  source_type     VARCHAR(50) NOT NULL,
-  source_id       UUID NOT NULL,
-  chunk_index     INTEGER DEFAULT 0,
-  chunk_text      TEXT NOT NULL,
-  embedding       vector(1536),
-  created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- CREATE TABLE IF NOT EXISTS document_embeddings (
+--   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+--   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+--   source_type     VARCHAR(50) NOT NULL,
+--   source_id       UUID NOT NULL,
+--   chunk_index     INTEGER DEFAULT 0,
+--   chunk_text      TEXT NOT NULL,
+--   embedding       vector(1536),
+--   created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+-- );
 
-CREATE INDEX IF NOT EXISTS idx_embeddings_org ON document_embeddings(organization_id);
-CREATE INDEX IF NOT EXISTS idx_embeddings_source ON document_embeddings(source_type, source_id);
+-- CREATE INDEX IF NOT EXISTS idx_embeddings_org ON document_embeddings(organization_id);
+-- CREATE INDEX IF NOT EXISTS idx_embeddings_source ON document_embeddings(source_type, source_id);
 
-ALTER TABLE document_embeddings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_embeddings ON document_embeddings
-  USING (organization_id = current_setting('app.current_org', true)::uuid);
+-- ALTER TABLE document_embeddings ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation_embeddings ON document_embeddings
+--   USING (organization_id = current_setting('app.current_org', true)::uuid);
 
--- Full-text search indexes
-CREATE INDEX IF NOT EXISTS idx_incidents_fts ON incidents USING gin(to_tsvector('english', coalesce(title,'') || ' ' || coalesce(summary,'')));
-CREATE INDEX IF NOT EXISTS idx_alerts_fts ON alerts USING gin(to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,'')));
-CREATE INDEX IF NOT EXISTS idx_events_fts ON security_events USING gin(to_tsvector('english', coalesce(message,'')));
+-- -- Full-text search indexes
+-- CREATE INDEX IF NOT EXISTS idx_incidents_fts ON incidents USING gin(to_tsvector('english', coalesce(title,'') || ' ' || coalesce(summary,'')));
+-- CREATE INDEX IF NOT EXISTS idx_alerts_fts ON alerts USING gin(to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,'')));
+-- CREATE INDEX IF NOT EXISTS idx_events_fts ON security_events USING gin(to_tsvector('english', coalesce(message,'')));

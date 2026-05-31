@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../config/dotenv.js";
 import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -23,7 +23,7 @@ async function migrate() {
   const appliedSet = new Set(applied.map((r) => r.name));
 
   const files = readdirSync(migrationsDir)
-    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => f.match(/^\d{3}_.*\.sql$/))
     .sort();
 
   for (const file of files) {

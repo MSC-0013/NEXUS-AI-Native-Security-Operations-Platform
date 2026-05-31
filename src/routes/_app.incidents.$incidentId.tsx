@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ArrowLeft, MessageSquare, ShieldAlert, Star, User, Clock, TriangleAlert as AlertTriangle, ChevronUp, FileText, CircleCheck as CheckCircle2, Circle, Loader as Loader2, Circle as XCircle, Paperclip, Network, Monitor, File as FileIcon, Globe, Send } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { SEED_INCIDENTS } from "@/lib/mock/generators";
+
 import { useIncident, useUpdateIncidentStatus } from "@/lib/api-hooks";
 import type { IncidentDto } from "@nexus/shared";
 import { SeverityBadge } from "@/components/severity-badge";
@@ -16,11 +16,10 @@ import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/_app/incidents/$incidentId")({
   head: ({ params }) => {
-    const i = SEED_INCIDENTS.find((x) => x.code === params.incidentId);
     return {
       meta: [
-        { title: i ? `${i.code} — NEXUS` : "Incident — NEXUS" },
-        { name: "description", content: i?.title ?? "Incident detail" },
+        { title: `Incident ${params.incidentId} — NEXUS` },
+        { name: "description", content: "Incident detail" },
       ],
     };
   },
@@ -163,8 +162,8 @@ function dtoToIncident(d: IncidentDto): Incident {
 function IncidentDetailPage() {
   const { incidentId } = Route.useParams();
   const { data: apiIncident } = useIncident(incidentId);
-  const seedBase = SEED_INCIDENTS.find((x) => x.code === incidentId);
-  const base: Incident | undefined = apiIncident ? dtoToIncident(apiIncident) : seedBase;
+  const inc = apiIncident ?? null;
+  const base: Incident | undefined = apiIncident ? dtoToIncident(apiIncident) : undefined;
   const override = useIncidentStore((s) => s.overrides[incidentId]);
   const setStatus = useIncidentStore((s) => s.setStatus);
   const setAssignee = useIncidentStore((s) => s.setAssignee);

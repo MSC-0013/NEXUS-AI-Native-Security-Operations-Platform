@@ -1,7 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
 import type { Env } from "../config/env.js";
-import { UnauthorizedError, ForbiddenError } from "./errors.js";
+import { UnauthorizedError, ForbiddenError } from "../lib/errors.js";
 
 export interface JwtPayload {
   sub: string;

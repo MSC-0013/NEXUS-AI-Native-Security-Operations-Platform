@@ -1,6 +1,7 @@
-﻿-- Required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+
 
 -- ==============================================================================
 -- ENUMERATIONS
@@ -541,7 +542,7 @@ CREATE TABLE vulnerabilities (
   patch_status     patch_status DEFAULT 'unpatched',
   exploit_status   exploit_status DEFAULT 'none',
   affected_packages JSONB DEFAULT '[]',
-  references       JSONB DEFAULT '[]',
+  reference_links  JSONB DEFAULT '[]',
   cwe_ids          JSONB DEFAULT '[]',
   published_at     TIMESTAMP WITH TIME ZONE,
   last_modified_at TIMESTAMP WITH TIME ZONE,

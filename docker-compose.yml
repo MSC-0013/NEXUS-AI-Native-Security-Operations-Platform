@@ -43,7 +43,7 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production-min-32-chars}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-in-production-min-32}
-      CORS_ORIGIN: http://localhost:5173,http://localhost:3000
+      CORS_ORIGIN: http://localhost:5173,http://localhost:3000,http://localhost:8080
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CHAT_MODEL: ${CHAT_MODEL:-gpt-4o-mini}

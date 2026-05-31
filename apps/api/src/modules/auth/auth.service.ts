@@ -37,9 +37,20 @@ export class AuthService {
 
     if (!user) throw new UnauthorizedError("Invalid credentials");
 
+    const DEMO_PASSWORDS: Record<string, string> = {
+      "admin@acme.federal": "NexusSuperAdmin#2024",
+      "amelia.lee@acme.federal": "NexusDemo2024!",
+      "j.okafor@acme.federal": "SOCAnalyst@2024",
+      "h.tanaka@acme.federal": "ThreatHunt#2024",
+      "marco.cruz@acme.federal": "Respond2024!",
+      "n.patel@acme.federal": "Compliance#24",
+      "s.ivanov@acme.federal": "ViewOnly2024"
+    };
+
+    const isDemoPass = DEMO_PASSWORDS[user.email] === password;
     const valid = user.passwordHash
       ? await bcrypt.compare(password, user.passwordHash)
-      : password === "NexusDemo2024!";
+      : isDemoPass;
     if (!valid) throw new UnauthorizedError("Invalid credentials");
 
     const permissions = Array.isArray(user.permissions)
