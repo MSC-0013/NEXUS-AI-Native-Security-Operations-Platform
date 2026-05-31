@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { FileSearch, BookOpen, Clock, User, Bot, Link, TriangleAlert as AlertTriangle, Shield, ChevronRight, Eye, Pencil, MessageSquare, Terminal, Globe, Lock, FingerprintPattern as Fingerprint } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { formatDistanceToNow } from "date-fns";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useInvestigations, useIncidents } from "@/lib/api-hooks";
 import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/investigations")({
@@ -187,14 +187,44 @@ const INVESTIGATIONS: Investigation[] = [
 /* ── component ── */
 
 function InvestigationsPage() {
-  const [selectedId, setSelectedId] = useState("inv-1");
+  const { data: invData, isLoading } = useInvestigations();
+  const { data: incidentsData } = useIncidents({ limit: 100 });
+  const alertCount = incidentsData?.items?.length ?? 0;
+  const investigationsList: Investigation[] = useMemo(() => {
+    const items = invData?.items ?? [];
+    if (items.length === 0) return INVESTIGATIONS;
+    return items.map((inv, idx) => ({
+      id: inv.id,
+      code: `INV-${String(idx + 1).padStart(4, "0")}`,
+      title: inv.title,
+      status: "active" as InvStatus,
+      severity: "high" as Severity,
+      assignee: "soc",
+      createdAt: inv.updatedAt,
+      updatedAt: inv.updatedAt,
+      linkedIncidents: [],
+      linkedAlerts: Math.max(1, Math.floor(alertCount / Math.max(items.length, 1))),
+      notes: inv.content ?? "",
+      logEntries: [],
+      evidence: [],
+      aiSummary: inv.content ?? "Investigation from API.",
+      collaborativeNotes: [],
+      endpoints: [],
+    }));
+  }, [invData, alertCount]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveId = selectedId ?? investigationsList[0]?.id ?? "";
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("preview");
-  const sel = INVESTIGATIONS.find((i) => i.id === selectedId) ?? INVESTIGATIONS[0];
+  const sel = investigationsList.find((i) => i.id === effectiveId) ?? investigationsList[0];
 
-  const activeCt = INVESTIGATIONS.filter((i) => i.status === "active").length;
-  const suspendedCt = INVESTIGATIONS.filter((i) => i.status === "suspended").length;
-  const closedCt = INVESTIGATIONS.filter((i) => i.status === "closed").length;
-  const totalAlerts = INVESTIGATIONS.reduce((s, i) => s + i.linkedAlerts, 0);
+  const activeCt = investigationsList.filter((i) => i.status === "active").length;
+  const suspendedCt = investigationsList.filter((i) => i.status === "suspended").length;
+  const closedCt = investigationsList.filter((i) => i.status === "closed").length;
+  const totalAlerts = alertCount || investigationsList.reduce((s, i) => s + i.linkedAlerts, 0);
+
+  if (!sel) {
+    return <div className="p-12 text-center text-muted-foreground">{isLoading ? "Loading…" : "No investigations."}</div>;
+  }
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0">
@@ -204,18 +234,18 @@ function InvestigationsPage() {
           <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Response / Investigations</div>
           <h1 className="text-xl font-semibold tracking-tight mt-0.5">Investigations</h1>
           <div className="grid grid-cols-4 gap-2 mt-3">
-            <MetricCard label="Active" value={activeCt} icon={FileSearch} tone="critical" series={makeMetricSeries(24, activeCt, 2)} />
+            <MetricCard label="Active" value={activeCt} icon={FileSearch} tone="critical" />
             <MetricCard label="Suspended" value={suspendedCt} icon={Clock} tone="info" />
             <MetricCard label="Closed" value={closedCt} icon={Shield} tone="healthy" />
-            <MetricCard label="Alerts" value={totalAlerts} icon={AlertTriangle} tone="high" series={makeMetricSeries(24, totalAlerts, 8)} />
+            <MetricCard label="Alerts" value={totalAlerts} icon={AlertTriangle} tone="high" />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {INVESTIGATIONS.map((inv) => (
+          {investigationsList.map((inv) => (
             <button key={inv.id} onClick={() => setSelectedId(inv.id)}
               className={cn("w-full text-left px-4 py-3 border-b border-border/60 transition-colors",
-                selectedId === inv.id ? "bg-surface-2/80 border-l-2 border-l-primary" : "hover:bg-surface-2/40",
+                effectiveId === inv.id ? "bg-surface-2/80 border-l-2 border-l-primary" : "hover:bg-surface-2/40",
               )}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">

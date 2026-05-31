@@ -27,4 +27,24 @@ export class ReportsService {
       }));
     });
   }
+
+  async create(orgId: string, data: { title: string; reportType: string }) {
+    return withTenant(this.client, orgId, async () => {
+      const [row] = await this.db.insert(reports).values({
+        organizationId: orgId,
+        title: data.title,
+        reportType: data.reportType,
+        status: "pending",
+      }).returning();
+
+      return {
+        id: row.id,
+        reportType: row.reportType,
+        title: row.title,
+        status: row.status,
+        generatedAt: row.generatedAt?.toISOString() ?? null,
+        createdAt: row.createdAt?.toISOString(),
+      };
+    });
+  }
 }

@@ -1,41 +1,55 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BadgeCheck, ClipboardCheck, FileCheck, ListChecks, ScrollText, XCircle } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
+import { useCompliance } from "@/lib/api-hooks";
+import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/compliance")({
   head: () => ({ meta: [{ title: "Compliance — NEXUS" }] }),
-  component: () => (
+  component: CompliancePage,
+});
+
+function CompliancePage() {
+  const { data, isLoading } = useCompliance();
+  const items = data?.items ?? [];
+  const failingControls = items.flatMap((a) => a.controls.filter((c) => c.status === "fail" || c.status === "failed"));
+  const avgScore =
+    items.length > 0 ? Math.round(items.reduce((s, a) => s + a.scorePercent, 0) / items.length) : 0;
+
+  return (
     <ModulePreview
       icon={ListChecks}
       eyebrow="Govern"
       title="Compliance"
-      description="Continuous control monitoring across SOC 2, ISO 27001, PCI-DSS, HIPAA, and FedRAMP frameworks."
+      description="Continuous control monitoring across SOC 2, ISO 27001, PCI-DSS, and more."
       kpis={[
-        { label: "Frameworks", value: 7, icon: ScrollText, tone: "info" },
-        { label: "Controls passing", value: "94.2%", icon: BadgeCheck, tone: "healthy", series: 80 },
-        { label: "Failing controls", value: 38, icon: XCircle, tone: "critical" },
-        { label: "Evidence collected", value: "12,402", icon: FileCheck, tone: "default" },
-        { label: "Next audit", value: "21d", icon: ClipboardCheck, tone: "high" },
+        { label: "Frameworks", value: isLoading ? "…" : items.length, icon: ScrollText, tone: "info" },
+        { label: "Avg score", value: isLoading ? "…" : `${avgScore}%`, icon: BadgeCheck, tone: "healthy" },
+        { label: "Failing controls", value: isLoading ? "…" : failingControls.length, icon: XCircle, tone: "critical" },
+        { label: "Assessments", value: isLoading ? "…" : items.filter((a) => a.status === "active").length, icon: FileCheck, tone: "default" },
+        { label: "In review", value: isLoading ? "…" : items.filter((a) => a.status !== "passing").length, icon: ClipboardCheck, tone: "high" },
       ]}
       tableTitle="Failing controls"
-      columns={["Control", "Framework", "Owner", "Last test", "Status"]}
-      rows={[
-        { cells: ["CC6.1 Logical access provisioning", "SOC 2", "secops", "2h ago", "FAIL"], severity: "high" },
-        { cells: ["A.9.2.5 Review of access rights", "ISO 27001", "it-admin", "1d ago", "FAIL"], severity: "high" },
-        { cells: ["PCI 8.3 MFA on all admin access", "PCI-DSS", "secops", "3h ago", "FAIL"], severity: "critical" },
-        { cells: ["§164.312(b) Audit controls", "HIPAA", "platform", "1d ago", "FAIL"], severity: "medium" },
-        { cells: ["AC-2 Account management", "FedRAMP", "secops", "4h ago", "FAIL"], severity: "high" },
-      ]}
+      columns={["Control", "Framework", "Title", "Status"]}
+      rows={
+        failingControls.length === 0 && !isLoading
+          ? [{ cells: ["All controls passing", "—", "—", "PASS"], severity: "healthy" }]
+          : failingControls.slice(0, 8).map((c) => {
+              const assessment = items.find((a) => a.controls.some((x) => x.id === c.id));
+              return {
+                cells: [c.controlId, assessment?.framework ?? "—", c.title, c.status.toUpperCase()],
+                severity: "high" as Severity,
+              };
+            })
+      }
       rightPanel={{
         title: "Framework health",
-        items: [
-          { label: "SOC 2 Type II", value: "96%", tone: "healthy" },
-          { label: "ISO 27001", value: "94%", tone: "healthy" },
-          { label: "PCI-DSS 4.0", value: "88%", tone: "high" },
-          { label: "HIPAA", value: "91%", tone: "high" },
-          { label: "FedRAMP Mod.", value: "82%", tone: "high" },
-        ],
+        items: items.map((a) => ({
+          label: a.name,
+          value: `${a.scorePercent}%`,
+          tone: a.scorePercent >= 90 ? "healthy" : a.scorePercent >= 75 ? "info" : "high",
+        })),
       }}
     />
-  ),
-});
+  );
+}

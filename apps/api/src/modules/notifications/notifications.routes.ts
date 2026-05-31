@@ -33,6 +33,24 @@ export async function notificationsRoutes(app: FastifyInstance) {
     });
   });
 
+  app.patch("/v1/notifications/read-all", {
+    preHandler: authGuard(app.env, "view:notifications"),
+  }, async (request, reply) => {
+    const orgId = getUser(request).orgId;
+    const userId = getUser(request).sub;
+    await withTenant(app.pgClient, orgId, async () => {
+      await app.db
+        .update(notifications)
+        .set({ isRead: true, readAt: new Date() })
+        .where(and(
+          eq(notifications.organizationId, orgId),
+          eq(notifications.userId, userId),
+          eq(notifications.isRead, false),
+        ));
+    });
+    return reply.send({ ok: true });
+  });
+
   app.patch("/v1/notifications/:id/read", {
     preHandler: authGuard(app.env, "view:notifications"),
   }, async (request, reply) => {

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ArrowLeft, MessageSquare, ShieldAlert, Star, User, Clock, TriangleAlert as AlertTriangle, ChevronUp, FileText, CircleCheck as CheckCircle2, Circle, Loader as Loader2, Circle as XCircle, Paperclip, Network, Monitor, File as FileIcon, Globe, Send } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { useIncident, useUpdateIncidentStatus } from "@/lib/api-hooks";
+import { useIncident, useIncidentEvidence, useIncidentComments } from "@/lib/api-hooks";
 import type { IncidentDto } from "@nexus/shared";
 import { SeverityBadge } from "@/components/severity-badge";
 import { formatDistanceToNow, differenceInMinutes, differenceInSeconds } from "date-fns";
@@ -55,16 +55,16 @@ const EVIDENCE_COLORS: Record<EvidenceType, string> = {
   endpoint: "bg-teal-500/15 text-teal-400 border-teal-500/40",
 };
 
-const MOCK_EVIDENCE: { id: string; type: EvidenceType; name: string; timestamp: string; source: string }[] = [
-  { id: "EV-001", type: "log", name: "auth-service-2026-05-23.log", timestamp: "2026-05-23T14:12:03Z", source: "prod-log-aggregator" },
-  { id: "EV-002", type: "screenshot", name: "suspicious-login-ui.png", timestamp: "2026-05-23T14:18:45Z", source: "soc-analyst-upload" },
-  { id: "EV-003", type: "network", name: "pcap-exfil-session-0782", timestamp: "2026-05-23T14:25:19Z", source: "network-monitor" },
-  { id: "EV-004", type: "file", name: "dropper_payload.exe", timestamp: "2026-05-23T14:31:02Z", source: "endpoint-scan" },
-  { id: "EV-005", type: "endpoint", name: "WORKSTATION-442", timestamp: "2026-05-23T14:33:11Z", source: "edr-agent" },
-  { id: "EV-006", type: "log", name: "firewall-deny-2026-05-23.log", timestamp: "2026-05-23T14:40:55Z", source: "firewall-gateway" },
-];
-
 type ResponderRole = "lead" | "support" | "reviewer";
+
+function mapEvidenceType(type: string): EvidenceType {
+  const t = type.toLowerCase();
+  if (t.includes("log")) return "log";
+  if (t.includes("screen")) return "screenshot";
+  if (t.includes("network")) return "network";
+  if (t.includes("file")) return "file";
+  return "endpoint";
+}
 const ROLE_STYLES: Record<ResponderRole, string> = {
   lead: "bg-amber-500/15 text-amber-400 border-amber-500/40",
   support: "bg-sky-500/15 text-sky-400 border-sky-500/40",
@@ -87,14 +87,6 @@ const MOCK_SLA = {
 const MOCK_ESCALATIONS: { from: Severity; to: Severity; reason: string; at: string; by: string }[] = [
   { from: "medium", to: "high", reason: "Scope expanded to production fleet", at: "2026-05-23T14:20:00Z", by: "k.morgan" },
   { from: "high", to: "critical", reason: "Active exfiltration confirmed", at: "2026-05-23T14:35:00Z", by: "k.morgan" },
-];
-
-const MOCK_COMMS: { from: string; to: string; message: string; at: string }[] = [
-  { from: "k.morgan", to: "a.chen", message: "Can you pull the auth logs for the affected service? Need to correlate with the network capture.", at: "2026-05-23T14:12:00Z" },
-  { from: "a.chen", to: "k.morgan", message: "On it. Seeing repeated failed auth attempts from 10.0.4.77 starting at 14:02 UTC. Cross-referencing with EDR data now.", at: "2026-05-23T14:16:00Z" },
-  { from: "m.patel", to: "k.morgan", message: "Network team has isolated the suspect subnet. Containment in progress.", at: "2026-05-23T14:22:00Z" },
-  { from: "k.morgan", to: "all", message: "Escalating to critical — active exfiltration confirmed on port 443 outbound. All hands on deck.", at: "2026-05-23T14:35:00Z" },
-  { from: "j.lee", to: "k.morgan", message: "Running forensic snapshot of WORKSTATION-442. Will have image in 20 min.", at: "2026-05-23T14:48:00Z" },
 ];
 
 type RCAStep = "identify" | "analyze" | "confirm" | "document";
@@ -162,6 +154,21 @@ function dtoToIncident(d: IncidentDto): Incident {
 function IncidentDetailPage() {
   const { incidentId } = Route.useParams();
   const { data: apiIncident } = useIncident(incidentId);
+  const { data: evidenceData } = useIncidentEvidence(incidentId);
+  const { data: commentsData } = useIncidentComments(incidentId);
+  const evidenceItems = (evidenceData?.items ?? []).map((ev) => ({
+    id: ev.id,
+    type: mapEvidenceType(ev.type),
+    name: ev.title || ev.fileName || ev.type,
+    timestamp: ev.addedAt ?? new Date().toISOString(),
+    source: ev.type,
+  }));
+  const commsItems = (commentsData?.items ?? []).map((c) => ({
+    from: c.author,
+    to: "team",
+    message: c.content,
+    at: c.createdAt ?? new Date().toISOString(),
+  }));
   const inc = apiIncident ?? null;
   const base: Incident | undefined = apiIncident ? dtoToIncident(apiIncident) : undefined;
   const override = useIncidentStore((s) => s.overrides[incidentId]);
@@ -276,9 +283,12 @@ function IncidentDetailPage() {
           </Panel>
 
           {/* --- Communication Timeline --- */}
-          <Panel title="Communication Timeline" subtitle={`${MOCK_COMMS.length} messages`}>
+          <Panel title="Communication Timeline" subtitle={`${commsItems.length} messages`}>
             <div className="space-y-3">
-              {MOCK_COMMS.map((c, idx) => (
+              {commsItems.length === 0 && (
+                <p className="text-sm text-muted-foreground">No comments yet.</p>
+              )}
+              {commsItems.map((c, idx) => (
                 <div key={idx} className="flex items-start gap-2 rounded-md border border-border bg-background p-3">
                   <div className="grid size-7 place-items-center rounded-full bg-primary/20 text-primary text-xs font-semibold shrink-0">
                     {c.from.slice(0, 1).toUpperCase()}
@@ -555,9 +565,12 @@ function IncidentDetailPage() {
           </Panel>
 
           {/* --- Linked Evidence --- */}
-          <Panel title="Linked Evidence" subtitle={`${MOCK_EVIDENCE.length} items`}>
+          <Panel title="Linked Evidence" subtitle={`${evidenceItems.length} items`}>
             <ul className="space-y-2">
-              {MOCK_EVIDENCE.map((ev) => {
+              {evidenceItems.length === 0 && (
+                <li className="text-sm text-muted-foreground">No evidence attached.</li>
+              )}
+              {evidenceItems.map((ev) => {
                 const Icon = EVIDENCE_ICONS[ev.type];
                 return (
                   <li key={ev.id} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">

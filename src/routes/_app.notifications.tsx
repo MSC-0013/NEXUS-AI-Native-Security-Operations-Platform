@@ -18,6 +18,11 @@ import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { formatDistanceToNow } from "date-fns";
 import type { Severity } from "@/lib/mock/types";
+import {
+  useApiNotifications,
+  useMarkNotificationRead,
+  useMarkAllNotificationsRead,
+} from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/notifications")({
   head: () => ({
@@ -52,38 +57,17 @@ interface Notification {
   read: boolean;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Mock data                                                                  */
-/* -------------------------------------------------------------------------- */
-
 const NOW = new Date();
 
-function ago(hours: number): Date {
-  return new Date(NOW.getTime() - hours * 3_600_000);
+function mapApiType(type: string): NotificationType {
+  if (type.includes("incident") || type.includes("mention")) return "incident_mention";
+  if (type.includes("ai") || type.includes("copilot")) return "ai_recommendation";
+  if (type.includes("deploy")) return "deployment_update";
+  if (type.includes("endpoint") || type.includes("edr")) return "endpoint_alert";
+  if (type.includes("threat") || type.includes("ioc")) return "threat_intel";
+  if (type.includes("compliance")) return "compliance_alert";
+  return "incident_mention";
 }
-
-const MOCK_NOTIFICATIONS: Notification[] = [
-  { id: "n1", type: "incident_mention", severity: "critical", title: "You were mentioned in INC-401", description: "@soc-lead assigned you to the LSASS credential dumping investigation on web-prod-12. Immediate review required — active exfiltration suspected.", timestamp: ago(0.5), source: "Incidents", read: false },
-  { id: "n2", type: "endpoint_alert", severity: "critical", title: "EDR-2001 Critical alert on web-prod-12", description: "LSASS memory access detected via mimikatz-style syscall sequence. Host isolated, containment pending operator confirmation.", timestamp: ago(1), source: "EDR Falcon", read: false },
-  { id: "n3", type: "threat_intel", severity: "high", title: "New IOC cluster matches your watchlist", description: "STIX bundle from CISA AA24-131A contains 14 indicators overlapping with your Asia-Pacific adversary profile. 3 hits in last 24h events.", timestamp: ago(2), source: "Threat Intel", read: false },
-  { id: "n4", type: "ai_recommendation", severity: "high", title: "Copilot: Correlation across 3 incidents", description: "AI detected shared C2 infrastructure between INC-398, INC-400, and INC-401 — same Cobalt Strike team server (185.220.101.42). Recommending merger.", timestamp: ago(2.5), source: "NEXUS AI", read: false },
-  { id: "n5", type: "compliance_alert", severity: "high", title: "SOC 2 control gap: MFA not enforced", description: "Okta policy audit found 23 privileged accounts bypassing MFA via remembered device exemption. Remediation deadline in 48h.", timestamp: ago(3), source: "Compliance", read: false },
-  { id: "n6", type: "deployment_update", severity: "medium", title: "Zeek sensor v5.4.2 deployed to us-east-1", description: "Rolling deployment completed across 12 sensors. New JA3/JA3S fingerprinting rules active. No traffic disruption observed.", timestamp: ago(4), source: "Deployments", read: true },
-  { id: "n7", type: "incident_mention", severity: "high", title: "Comment on INC-398 by @threat-hunter", description: "New YARA rule match against the Emotet dropper sample. Correlates with endpoint telemetry from finance-laptop-08. Your input requested.", timestamp: ago(5), source: "Incidents", read: false },
-  { id: "n8", type: "endpoint_alert", severity: "medium", title: "Anomalous PowerShell on dc-prod-03", description: "Office process spawned powershell.exe with encoded command. EDR risk score 72/100. Sandbox analysis pending.", timestamp: ago(6), source: "EDR Falcon", read: true },
-  { id: "n9", type: "ai_recommendation", severity: "medium", title: "Copilot: Tuning suggestion for DNS-77", description: "DGA detection rule has 34% false-positive rate this week. Suggesting threshold adjustment from 0.82 to 0.91 to reduce noise.", timestamp: ago(8), source: "NEXUS AI", read: true },
-  { id: "n10", type: "threat_intel", severity: "info", title: "Sector threat landscape updated", description: "Financial services ISAC published Q2 threat briefing. Key findings: 40% increase in credential theft, novel MFA-bypass kits targeting Okta.", timestamp: ago(14), source: "Threat Intel", read: true },
-  { id: "n11", type: "compliance_alert", severity: "medium", title: "PCI-DSS scan: 2 new findings", description: "Quarterly ASV scan flagged TLS 1.0 on payment-gateway-02 and unpatched OpenSSL on auth-proxy-05. SLA: 30 days.", timestamp: ago(18), source: "Compliance", read: true },
-  { id: "n12", type: "deployment_update", severity: "info", title: "Correlation engine v3.2.0 released", description: "New release includes real-time enrichment pipeline, 2x throughput on event correlation, and updated MITRE ATT&CK mapping to v14.", timestamp: ago(22), source: "Deployments", read: true },
-  { id: "n13", type: "incident_mention", severity: "critical", title: "Escalation: INC-400 requires your approval", description: "Auto-escalation triggered after 15 min without ack. Ransomware indicator on billing-srv-01. Approve containment or assign alternate.", timestamp: ago(26), source: "Incidents", read: false },
-  { id: "n14", type: "endpoint_alert", severity: "high", title: "Brute force from 185.220.101.x", description: "1,400 failed auth attempts against Okta tenant in 30 minutes. Source IP block listed on AbuseIPDB. Geo: Russia.", timestamp: ago(30), source: "Okta", read: true },
-  { id: "n15", type: "ai_recommendation", severity: "info", title: "Copilot: Weekly digest ready", description: "Summary: 8 incidents opened, 5 resolved. Mean time to contain improved 18%. Top MITRE technique: T1059.001 (PowerShell).", timestamp: ago(48), source: "NEXUS AI", read: true },
-  { id: "n16", type: "compliance_alert", severity: "info", title: "Audit log export completed", description: "Monthly SOC 2 evidence package exported to S3 bucket compliance-evidence-us-east-1. 284k events, SHA-256 checksum verified.", timestamp: ago(52), source: "Compliance", read: true },
-  { id: "n17", type: "threat_intel", severity: "medium", title: "Adversary profile updated: APT-41", description: "New TTPs added including supply-chain compromise via NuGet packages. Overlaps with your software-build environment. Review recommended.", timestamp: ago(72), source: "Threat Intel", read: true },
-  { id: "n18", type: "deployment_update", severity: "healthy", title: "WAF ruleset v2024.06 deployed", description: "Updated OWASP Top 10 signatures and bot-management policies. Zero downtime blue-green deployment across all regions.", timestamp: ago(96), source: "Deployments", read: true },
-  { id: "n19", type: "incident_mention", severity: "medium", title: "Resolution note added to INC-392", description: "@sec-ops-lead closed with root cause: stale service account credentials. Remediation: rotated 47 service accounts, enforced 90-day rotation.", timestamp: ago(120), source: "Incidents", read: true },
-  { id: "n20", type: "endpoint_alert", severity: "info", title: "Sensor health check passed", description: "All 84 EDR sensors reporting healthy status. Last missed heartbeat: 0. Coverage: 100% across production and staging.", timestamp: ago(168), source: "EDR Falcon", read: true },
-];
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -135,7 +119,23 @@ const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "info", "healt
 /* -------------------------------------------------------------------------- */
 
 function NotificationsPage() {
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const { data, isLoading } = useApiNotifications();
+  const markRead = useMarkNotificationRead();
+  const markAllRead = useMarkAllNotificationsRead();
+  const notifications: Notification[] = useMemo(
+    () =>
+      (data?.items ?? []).map((n) => ({
+        id: n.id,
+        type: mapApiType(n.type),
+        severity: n.severity as Severity,
+        title: n.title,
+        description: n.body ?? "",
+        timestamp: new Date(n.createdAt),
+        source: n.type,
+        read: n.isRead,
+      })),
+    [data?.items],
+  );
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -182,12 +182,12 @@ function NotificationsPage() {
     return SEVERITY_ORDER.map((s) => ({ severity: s, items: map.get(s)! }));
   }, [notifications]);
 
-  function markRead(id: string) {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  function onMarkRead(id: string) {
+    markRead.mutate(id);
   }
 
-  function markAllRead() {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  function onMarkAllRead() {
+    markAllRead.mutate();
   }
 
   return (
@@ -199,7 +199,8 @@ function NotificationsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Notification Center</h1>
         </div>
         <button
-          onClick={markAllRead}
+          onClick={onMarkAllRead}
+          disabled={markAllRead.isPending}
           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
         >
           <Check className="size-3.5" />
@@ -257,7 +258,12 @@ function NotificationsPage() {
 
         {/* Notification list */}
         <div className="space-y-4">
-          {grouped.length === 0 && (
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <div className="text-sm">Loading notifications…</div>
+            </div>
+          )}
+          {!isLoading && grouped.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <Bell className="size-10 mb-3 opacity-40" />
               <div className="text-sm">No notifications match this filter.</div>
@@ -284,7 +290,7 @@ function NotificationsPage() {
                           setExpandedId(null);
                         } else {
                           setExpandedId(n.id);
-                          if (!n.read) markRead(n.id);
+                          if (!n.read) onMarkRead(n.id);
                         }
                       }}
                       className={cn(
@@ -332,7 +338,7 @@ function NotificationsPage() {
                               </div>
                               {!n.read && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); markRead(n.id); }}
+                                  onClick={(e) => { e.stopPropagation(); onMarkRead(n.id); }}
                                   className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
                                 >
                                   <Check className="size-3" /> Mark read

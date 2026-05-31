@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
+import { useIncidents, useEvents } from "@/lib/api-hooks";
 import { Activity, TriangleAlert as AlertTriangle, Bot, Cloud, Shield, Server, FileText, Clock, ListFilter as Filter, Zap, Globe, Monitor, Lock, Bug, ChevronDown, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -83,11 +84,57 @@ function timeGroup(date: Date): string {
 }
 
 function TimelinePage() {
+  const { data: incidentsData, isLoading } = useIncidents({ limit: 50 });
+  const { data: eventsData } = useEvents({ limit: 30 });
   const [typeFilter, setTypeFilter] = useState<TimelineType | "all">("all");
   const [sevFilter, setSevFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const filtered = ENTRIES.filter((e) => {
+  const entries = useMemo((): TimelineEntry[] => {
+    const list: TimelineEntry[] = [];
+    for (const inc of incidentsData?.items ?? []) {
+      list.push({
+        id: `inc-${inc.id}`,
+        type: "incident",
+        action: inc.status,
+        title: inc.title,
+        description: inc.summary ?? inc.title,
+        severity: inc.severity as TimelineEntry["severity"],
+        entity: inc.code,
+        source: "SOC",
+        timestamp: new Date(inc.updatedAt),
+      });
+      for (const t of inc.timeline ?? []) {
+        list.push({
+          id: `tl-${inc.id}-${t.at}`,
+          type: "alert",
+          action: t.action,
+          title: t.action,
+          description: t.detail ?? "",
+          severity: inc.severity as TimelineEntry["severity"],
+          entity: inc.code,
+          source: t.actor,
+          timestamp: new Date(t.at),
+        });
+      }
+    }
+    for (const ev of eventsData?.items ?? []) {
+      list.push({
+        id: `ev-${ev.id}`,
+        type: "endpoint",
+        action: ev.type,
+        title: ev.message.slice(0, 80),
+        description: ev.message,
+        severity: ev.severity as TimelineEntry["severity"],
+        entity: ev.host ?? ev.id.slice(0, 8),
+        source: ev.source,
+        timestamp: new Date(ev.timestamp),
+      });
+    }
+    return list.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }, [incidentsData, eventsData]);
+
+  const filtered = entries.filter((e) => {
     if (typeFilter !== "all" && e.type !== typeFilter) return false;
     if (sevFilter !== "all" && e.severity !== sevFilter) return false;
     return true;
@@ -99,7 +146,7 @@ function TimelinePage() {
     return acc;
   }, {});
 
-  const counts = ENTRIES.reduce<Record<TimelineType, number>>((acc, e) => {
+  const counts = entries.reduce<Record<TimelineType, number>>((acc, e) => {
     acc[e.type] = (acc[e.type] ?? 0) + 1;
     return acc;
   }, {} as Record<TimelineType, number>);
@@ -153,7 +200,7 @@ function TimelinePage() {
           <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-3 pb-2">Live</div>
           <div className="flex items-center gap-2 px-3">
             <span className="h-2 w-2 rounded-full bg-healthy animate-pulse" />
-            <span className="text-xs text-muted-foreground">25 events streaming</span>
+            <span className="text-xs text-muted-foreground">{isLoading ? "Loading…" : `${entries.length} events`}</span>
           </div>
         </div>
       </aside>

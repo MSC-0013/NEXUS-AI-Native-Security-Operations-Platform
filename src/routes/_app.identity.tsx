@@ -1,41 +1,57 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fingerprint, KeyRound, ShieldOff, UserCheck, UserX, Users } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
+import { useIdentityAnomalies } from "@/lib/api-hooks";
+import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/identity")({
   head: () => ({ meta: [{ title: "Identity — NEXUS" }] }),
-  component: () => (
+  component: IdentityPage,
+});
+
+function IdentityPage() {
+  const { data, isLoading } = useIdentityAnomalies();
+  const items = data?.items ?? [];
+  const critical = items.filter((a) => a.severity === "critical").length;
+  const high = items.filter((a) => a.severity === "high").length;
+
+  const sev = (s: string): Severity =>
+    s === "critical" ? "critical" : s === "high" ? "high" : s === "medium" ? "medium" : "info";
+
+  return (
     <ModulePreview
       icon={Fingerprint}
       eyebrow="Detect"
       title="Identity"
-      description="Identity threat detection across SSO, IdP, and privileged access — anomalous sessions, impossible travel, MFA fatigue."
+      description="Identity threat detection — anomalous sessions, impossible travel, and MFA fatigue."
       kpis={[
-        { label: "Identities", value: "8,412", icon: Users, tone: "default", series: 70 },
-        { label: "Privileged", value: 214, icon: KeyRound, tone: "high" },
-        { label: "MFA enrolled", value: "97.4%", icon: UserCheck, tone: "healthy" },
-        { label: "Risky sessions", value: 31, icon: ShieldOff, tone: "critical", series: 40, delta: { v: "3", up: true } },
-        { label: "Disabled (30d)", value: 142, icon: UserX, tone: "info" },
+        { label: "Anomalies", value: isLoading ? "…" : items.length, icon: Users, tone: "default" },
+        { label: "Critical", value: isLoading ? "…" : critical, icon: ShieldOff, tone: "critical" },
+        { label: "High", value: isLoading ? "…" : high, icon: KeyRound, tone: "high" },
+        { label: "Unique users", value: isLoading ? "…" : new Set(items.map((a) => a.userEmail)).size, icon: UserCheck, tone: "healthy" },
+        { label: "Types", value: isLoading ? "…" : new Set(items.map((a) => a.type)).size, icon: UserX, tone: "info" },
       ]}
       tableTitle="High-risk identity events"
-      columns={["User", "Signal", "Source IP", "Geo", "When"]}
-      rows={[
-        { cells: ["k.morgan@acme.io", "Impossible travel (NY → SG)", "203.0.113.42", "SG", "3m ago"], severity: "critical" },
-        { cells: ["svc-deploy", "Token used from new ASN", "185.220.101.7", "RU", "8m ago"], severity: "high" },
-        { cells: ["a.chen@acme.io", "MFA fatigue (12 prompts)", "10.4.22.18", "US", "14m ago"], severity: "high" },
-        { cells: ["root@aws-prod", "Console login from TOR exit", "171.25.193.20", "—", "32m ago"], severity: "critical" },
-        { cells: ["m.patel@acme.io", "New device + privileged role", "192.0.2.55", "IN", "1h ago"], severity: "medium" },
-      ]}
+      columns={["User", "Type", "Severity", "Description"]}
+      rows={
+        items.length === 0 && !isLoading
+          ? [{ cells: ["No anomalies", "—", "—", "—"] }]
+          : items.slice(0, 8).map((a) => ({
+              cells: [a.userEmail, a.type, a.severity.toUpperCase(), a.description ?? "—"],
+              severity: sev(a.severity),
+            }))
+      }
       rightPanel={{
-        title: "Top providers",
-        items: [
-          { label: "Okta", value: "5,210", tone: "info" },
-          { label: "Azure AD", value: "2,418" },
-          { label: "Google Workspace", value: "612" },
-          { label: "AWS IAM", value: "172" },
-          { label: "Local accounts", value: "0", tone: "healthy" },
-        ],
+        title: "By type",
+        items: Object.entries(
+          items.reduce<Record<string, number>>((acc, a) => {
+            acc[a.type] = (acc[a.type] ?? 0) + 1;
+            return acc;
+          }, {}),
+        )
+          .slice(0, 5)
+          .map(([label, value]) => ({ label, value: String(value) })),
       }}
     />
-  ),
-});
+  );
+}

@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { Activity, TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, Clock, Cpu, Globe, Wifi, Circle as XCircle, Zap, Radio, Server, Database, Search, Webhook } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { usePlatformHealth } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/status")({
   head: () => ({
@@ -111,20 +111,25 @@ function overallStatus(services: Service[]): ServiceStatus {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
+function mapServiceStatus(status: string): ServiceStatus {
+  if (status === "healthy" || status === "operational") return "operational";
+  if (status === "degraded") return "degraded";
+  return "down";
+}
+
 function StatusPage() {
-  const systemStatus = overallStatus(SERVICES);
-
-  const metricSeries = useMemo(
-    () => ({
-      uptime: makeMetricSeries(36, 99, 0.04),
-      latency: makeMetricSeries(36, 42, 18),
-      events: makeMetricSeries(36, 3200, 400),
-    }),
-    [],
-  );
-
-  const overall30d =
-    (SERVICES.reduce((sum, s) => sum + parseFloat(s.uptime), 0) / SERVICES.length).toFixed(2);
+  const { data: health, isLoading } = usePlatformHealth();
+  const apiServices: Service[] = (health?.services ?? []).map((s) => ({
+    name: s.name,
+    icon: Server,
+    status: mapServiceStatus(s.status),
+    uptime: health?.uptime ?? "99.9",
+    latencyMs: s.latencyMs ?? 0,
+    lastIncident: "—",
+  }));
+  const services = apiServices.length > 0 ? apiServices : SERVICES;
+  const systemStatus = overallStatus(services);
+  const overall30d = health?.uptime ?? (services.reduce((sum, s) => sum + parseFloat(s.uptime), 0) / services.length).toFixed(2);
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -195,27 +200,25 @@ function StatusPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <MetricCard
           label="Uptime (30d)"
-          value={`${overall30d}%`}
-          delta={{ v: "0.01%", up: false }}
+          value={isLoading ? "…" : `${overall30d}%`}
           icon={Activity}
           tone="healthy"
-          series={metricSeries.uptime}
         />
         <MetricCard
           label="Avg Latency"
-          value="42 ms"
-          delta={{ v: "8 ms", up: true }}
+          value={
+            services.length
+              ? `${Math.round(services.reduce((s, x) => s + x.latencyMs, 0) / services.length)} ms`
+              : "—"
+          }
           icon={Zap}
           tone="info"
-          series={metricSeries.latency}
         />
         <MetricCard
-          label="Ingestion Rate"
-          value="3.2k/s"
-          delta={{ v: "12%", up: true }}
+          label="Services"
+          value={isLoading ? "…" : String(services.length)}
           icon={Database}
           tone="default"
-          series={metricSeries.events}
         />
       </div>
 
@@ -223,7 +226,7 @@ function StatusPage() {
       <section>
         <h2 className="text-sm font-medium mb-3">Core Services</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {SERVICES.map((svc) => (
+          {services.map((svc) => (
             <div
               key={svc.name}
               className="rounded-lg border border-border bg-surface/60 p-4 space-y-3"

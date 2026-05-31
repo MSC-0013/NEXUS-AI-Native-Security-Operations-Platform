@@ -1,34 +1,49 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { SeverityBadge } from "@/components/severity-badge";
 import { Switch } from "@/components/ui/switch";
-import { Workflow, Zap, Bell, Globe, Ticket, Bot, Play, Clock, CircleCheck as CheckCircle2, Circle as XCircle, ArrowRight, Pause } from "lucide-react";
+import { useRunbooks } from "@/lib/api-hooks";
+import { Workflow, Zap, Bell, Globe, Ticket, ArrowRight } from "lucide-react";
+import { CircleCheck as CheckCircle2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export const Route = createFileRoute("/_app/automation")({
   head: () => ({ meta: [{ title: "Automation — NEXUS" }] }),
   component: AutomationPage,
-
 });
 
 interface WF {
-  id: string; name: string; trigger: string; actions: string[]; status: "active" | "paused"; lastRun: Date; successRate: number;
+  id: string;
+  name: string;
+  trigger: string;
+  actions: string[];
+  status: "active" | "paused";
+  lastRun: Date;
+  successRate: number;
 }
 
-const WORKFLOWS: WF[] = [
-  { id: "wf-1", name: "Auto-Isolate Compromised Endpoint", trigger: "Critical malware detection", actions: ["Isolate endpoint", "Create incident", "Notify SOC"], status: "active", lastRun: new Date(Date.now() - 3600000), successRate: 98 },
-  { id: "wf-2", name: "Auto-Escalate P1 Alerts", trigger: "Critical severity alert", actions: ["Escalate to SOC lead", "Page on-call", "Create Slack thread"], status: "active", lastRun: new Date(Date.now() - 600000), successRate: 100 },
-  { id: "wf-3", name: "Suppress Known False Positives", trigger: "Health check DNS pattern", actions: ["Suppress alert", "Tag as FP", "Log suppression"], status: "active", lastRun: new Date(Date.now() - 1800000), successRate: 95 },
-  { id: "wf-4", name: "Block Malicious IPs", trigger: "Threat intel IOC match", actions: ["Add to blocklist", "Notify firewall team", "Create case"], status: "active", lastRun: new Date(Date.now() - 7200000), successRate: 92 },
-  { id: "wf-5", name: "Rotate Compromised Credentials", trigger: "Credential exposure detected", actions: ["Force password reset", "Revoke sessions", "Notify user"], status: "paused", lastRun: new Date(Date.now() - 86400000), successRate: 87 },
-  { id: "wf-6", name: "Auto-Create Jira Ticket", trigger: "High severity alert unack 15m", actions: ["Create Jira ticket", "Assign to team", "Link alert"], status: "active", lastRun: new Date(Date.now() - 2400000), successRate: 100 },
-];
-
 function AutomationPage() {
-  const [wfs, setWfs] = useState(WORKFLOWS);
+  const { data, isLoading } = useRunbooks();
+  const [enabledOverride, setEnabledOverride] = useState<Record<string, boolean>>({});
 
-  const toggleWf = (id: string) => setWfs((prev) => prev.map((w) => w.id === id ? { ...w, status: w.status === "active" ? "paused" : "active" } : w));
+  const wfs: WF[] = useMemo(() => {
+    const items = data?.items ?? [];
+    return items.map((rb, idx) => {
+      const active = enabledOverride[rb.id] ?? rb.isAutomated;
+      return {
+        id: rb.id,
+        name: rb.name,
+        trigger: rb.description ?? "Runbook trigger",
+        actions: rb.steps.map((s) => s.name),
+        status: (active ? "active" : "paused") as "active" | "paused",
+        lastRun: new Date(Date.now() - (idx + 1) * 3600000),
+        successRate: active ? 95 + (idx % 5) : 80,
+      };
+    });
+  }, [data?.items, enabledOverride]);
+
+  const toggleWf = (id: string, currentActive: boolean) =>
+    setEnabledOverride((prev) => ({ ...prev, [id]: !currentActive }));
 
   return (
     <div className="p-6 space-y-6">
@@ -41,10 +56,16 @@ function AutomationPage() {
           <button className="text-xs px-3 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors flex items-center gap-1"><Zap className="h-3 w-3" />Create Workflow</button>
         </div>
         <div className="divide-y divide-border">
+          {isLoading && (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading workflows…</div>
+          )}
+          {!isLoading && wfs.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No runbooks configured.</div>
+          )}
           {wfs.map((wf) => (
             <div key={wf.id} className="px-4 py-3 hover:bg-surface transition-colors">
               <div className="flex items-center gap-3">
-                <Switch checked={wf.status === "active"} onCheckedChange={() => toggleWf(wf.id)} />
+                <Switch checked={wf.status === "active"} onCheckedChange={() => toggleWf(wf.id, wf.status === "active")} disabled={isLoading} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{wf.name}</span>

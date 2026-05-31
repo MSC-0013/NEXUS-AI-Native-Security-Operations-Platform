@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useCases, useIncidents } from "@/lib/api-hooks";
 import { Users, Shield, Clock, TriangleAlert as AlertTriangle, UserPlus, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -34,15 +34,21 @@ const ONCALL = [
 ];
 
 function OwnershipPage() {
+  const { data: casesData } = useCases();
+  const { data: incidentsData } = useIncidents({ limit: 50 });
+  const cases = casesData?.items ?? [];
+  const openIncidents = (incidentsData?.items ?? []).filter((i) => i.status === "open");
+  const unassigned = (incidentsData?.items ?? []).filter((i) => !i.assignee || i.assignee === "Unassigned");
+
   return (
     <div className="p-6 space-y-6">
       <h1 className="text-xl font-semibold flex items-center gap-2"><Users className="h-5 w-5 text-primary" />Service Ownership</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Services" value="5" icon={Users} tone="default" series={makeMetricSeries(5, 40)} />
-        <MetricCard label="Avg Response" value="4.6m" icon={Clock} tone="info" series={makeMetricSeries(46, 40)} />
-        <MetricCard label="Escalation Rate" value="19%" icon={AlertTriangle} tone="high" series={makeMetricSeries(19, 40)} />
-        <MetricCard label="Unassigned" value="4" icon={Shield} tone="critical" series={makeMetricSeries(4, 40)} />
+        <MetricCard label="Services" value={String(cases.length || SERVICES.length)} icon={Users} tone="default" />
+        <MetricCard label="Avg Response" value="4.6m" icon={Clock} tone="info" />
+        <MetricCard label="Escalation Rate" value={`${openIncidents.length > 0 ? Math.round((openIncidents.length / Math.max(1, (incidentsData?.items?.length ?? 1))) * 100) : 0}%`} icon={AlertTriangle} tone="high" />
+        <MetricCard label="Unassigned" value={String(unassigned.length)} icon={Shield} tone="critical" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

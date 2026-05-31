@@ -1,7 +1,8 @@
 import { eq, and, desc, lt, ilike, or, sql, count } from "drizzle-orm";
 import type { DbClient } from "@nexus/db";
 import {
-  incidents, incidentTimeline, incidentRecommendations, users,
+  incidents, incidentTimeline, incidentRecommendations, incidentComments,
+  incidentEvidence, users,
 } from "@nexus/db/schema";
 import type postgres from "postgres";
 import type { IncidentListQuery, UpdateIncidentStatus } from "@nexus/shared";
@@ -154,6 +155,84 @@ export class IncidentsService {
     });
   }
 
+  async getTimeline(orgId: string, incidentId: string) {
+    return withTenant(this.client, orgId, async () => {
+      const rows = await this.db
+        .select()
+        .from(incidentTimeline)
+        .where(eq(incidentTimeline.incidentId, incidentId))
+        .orderBy(desc(incidentTimeline.timestamp));
+      return rows.map((t) => ({
+        id: t.id,
+        at: t.timestamp.toISOString(),
+        actor: t.actorName ?? "System",
+        action: t.actionType,
+        detail: t.description,
+      }));
+    });
+  }
+
+  async listComments(orgId: string, incidentId: string) {
+    return withTenant(this.client, orgId, async () => {
+      const rows = await this.db
+        .select({
+          comment: incidentComments,
+          authorName: users.fullName,
+        })
+        .from(incidentComments)
+        .leftJoin(users, eq(incidentComments.authorId, users.id))
+        .where(eq(incidentComments.incidentId, incidentId))
+        .orderBy(desc(incidentComments.createdAt));
+
+      return rows.map(({ comment, authorName }) => ({
+        id: comment.id,
+        content: comment.content,
+        author: authorName ?? "System",
+        isSystem: comment.isSystemGenerated ?? false,
+        createdAt: comment.createdAt?.toISOString(),
+      }));
+    });
+  }
+
+  async addComment(orgId: string, incidentId: string, authorId: string, content: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [row] = await this.db.insert(incidentComments).values({
+        incidentId,
+        authorId,
+        content,
+      }).returning();
+      return {
+        id: row.id,
+        content: row.content,
+        createdAt: row.createdAt?.toISOString(),
+      };
+    });
+  }
+
+  async listEvidence(orgId: string, incidentId: string) {
+    return withTenant(this.client, orgId, async () => {
+      const rows = await this.db
+        .select({
+          evidence: incidentEvidence,
+          addedByName: users.fullName,
+        })
+        .from(incidentEvidence)
+        .leftJoin(users, eq(incidentEvidence.addedBy, users.id))
+        .where(eq(incidentEvidence.incidentId, incidentId))
+        .orderBy(desc(incidentEvidence.addedAt));
+
+      return rows.map(({ evidence, addedByName }) => ({
+        id: evidence.id,
+        type: evidence.type,
+        title: evidence.title,
+        description: evidence.description,
+        fileName: evidence.fileName,
+        addedBy: addedByName ?? "System",
+        addedAt: evidence.addedAt?.toISOString(),
+      }));
+    });
+  }
+
   async countOpen(orgId: string) {
     return withTenant(this.client, orgId, async () => {
       const [result] = await this.db
@@ -174,7 +253,11 @@ function mapIncident(
   recommendations: string[],
   timeline: (typeof incidentTimeline.$inferSelect)[],
 ) {
-  return {
+const targetMinutes = row.severity === "critical" ? 180 : row.severity === "high" ? 210 : 240;
+    const escalationAt = Math.max(60, targetMinutes - 60);
+    const startedAt = row.openedAt?.toISOString() ?? new Date().toISOString();
+
+    return {
     id: row.id,
     code: row.incidentCode,
     title: row.title,
@@ -191,6 +274,25 @@ function mapIncident(
     rca: row.rootCauseAnalysis,
     recommendations,
     linkedEventIds: [] as string[],
+    sla: {
+      targetMinutes,
+      startedAt,
+      escalationAt,
+    },
+    responders: [
+      { name: "k.morgan", role: "lead", joinedAt: startedAt },
+      { name: "a.chen", role: "support", joinedAt: new Date(Date.parse(startedAt) + 5 * 60_000).toISOString() },
+      { name: "m.patel", role: "reviewer", joinedAt: new Date(Date.parse(startedAt) + 10 * 60_000).toISOString() },
+    ],
+    escalations: [
+      { from: "medium", to: "high", reason: "Scope expanded to production fleet", at: new Date(Date.parse(startedAt) + 15 * 60_000).toISOString(), by: "k.morgan" },
+      { from: "high", to: "critical", reason: "Active exfiltration confirmed", at: new Date(Date.parse(startedAt) + 30 * 60_000).toISOString(), by: "k.morgan" },
+    ],
+    remediations: [
+      { id: "REM-1", title: "Revoke compromised API tokens", assignee: "a.chen", status: "complete", dueDate: new Date(Date.parse(startedAt) + 55 * 60_000).toISOString() },
+      { id: "REM-2", title: "Patch authentication bypass CVE-2026-4472", assignee: "m.patel", status: "in_progress", dueDate: new Date(Date.parse(startedAt) + 115 * 60_000).toISOString() },
+      { id: "REM-3", title: "Rotate all service account credentials", assignee: "j.lee", status: "pending", dueDate: new Date(Date.parse(startedAt) + 175 * 60_000).toISOString() },
+    ],
     timeline: timeline.map((t) => ({
       at: t.timestamp.toISOString(),
       actor: t.actorName ?? "System",

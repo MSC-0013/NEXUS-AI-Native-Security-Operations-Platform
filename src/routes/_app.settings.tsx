@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { WorkspaceContext } from "@/components/workspace-context";
+import { useCurrentOrg } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Settings — NEXUS" }] }),
@@ -187,6 +188,7 @@ function NotificationsTab() {
 
 /* ------- Workspace ------- */
 function WorkspaceTab() {
+  const { data: org, isLoading: orgLoading } = useCurrentOrg();
   const env = useWorkspaceStore((s) => s.environment);
   const region = useWorkspaceStore((s) => s.region);
   const setEnv = useWorkspaceStore((s) => s.setEnvironment);
@@ -195,7 +197,7 @@ function WorkspaceTab() {
   const active = useWorkspaceStore((s) => s.getActiveWorkspace());
 
   return (
-    <Section icon={Building2} title="Workspace defaults" desc="These switch the entire UI scope.">
+    <Section icon={Building2} title="Workspace defaults" desc={orgLoading ? "Loading organization…" : org ? `${org.name} (${org.slug})` : "These switch the entire UI scope."}>
       <Field label="Environment" hint={env}>
         <div className="flex gap-1">
           {(["production", "staging", "development"] as Environment[]).map((e) => (

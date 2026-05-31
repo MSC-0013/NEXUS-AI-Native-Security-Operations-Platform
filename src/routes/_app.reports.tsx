@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { FileText, Download, Calendar, Clock, ChartBar as BarChart3, Shield, TriangleAlert as AlertTriangle, Activity, Search, ChevronRight, Eye, FileSpreadsheet, File as FileJson, FileDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useReports } from "@/lib/api-hooks";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -64,17 +64,6 @@ interface GeneratedReport {
   size: string;
 }
 
-const GENERATED_REPORTS: GeneratedReport[] = [
-  { id: "r-001", name: "Q1 Executive Summary", type: "Executive Summary", generatedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), status: "ready", size: "2.4 MB" },
-  { id: "r-002", name: "SOC 2 Type II — April", type: "Compliance Report", generatedAt: new Date(Date.now() - 18 * 3600_000).toISOString(), status: "ready", size: "8.1 MB" },
-  { id: "r-003", name: "CVE Digest Week 21", type: "Vulnerability Summary", generatedAt: new Date(Date.now() - 45 * 60_000).toISOString(), status: "generating", size: "—" },
-  { id: "r-004", name: "SOC Shift Report — 2026-05-22", type: "SOC Metrics", generatedAt: new Date(Date.now() - 6 * 3600_000).toISOString(), status: "ready", size: "1.1 MB" },
-  { id: "r-005", name: "INC-1003 Post-mortem", type: "Incident Report", generatedAt: new Date(Date.now() - 72 * 3600_000).toISOString(), status: "ready", size: "3.7 MB" },
-  { id: "r-006", name: "Threat Briefing — APT41", type: "Threat Landscape", generatedAt: new Date(Date.now() - 24 * 3600_000).toISOString(), status: "ready", size: "5.2 MB" },
-  { id: "r-007", name: "PCI-DSS 4.0 — Monthly", type: "Compliance Report", generatedAt: new Date(Date.now() - 168 * 3600_000).toISOString(), status: "failed", size: "—" },
-  { id: "r-008", name: "Q2 Executive WIP", type: "Executive Summary", generatedAt: new Date(Date.now() - 10 * 60_000).toISOString(), status: "generating", size: "—" },
-];
-
 interface ScheduledReport {
   id: string;
   template: string;
@@ -101,15 +90,26 @@ const FREQ_BADGE: Record<string, string> = {
 /* ---------- component ---------- */
 
 function ReportsPage() {
+  const { data: reportsData, isLoading } = useReports();
+  const generatedReports: GeneratedReport[] = useMemo(
+    () =>
+      (reportsData?.items ?? []).map((r) => ({
+        id: r.id,
+        name: r.title,
+        type: r.reportType,
+        generatedAt: r.generatedAt ?? new Date().toISOString(),
+        status: (r.status === "ready" || r.status === "completed"
+          ? "ready"
+          : r.status === "failed"
+            ? "failed"
+            : "generating") as ReportStatus,
+        size: "—",
+      })),
+    [reportsData],
+  );
+  const failedCount = generatedReports.filter((r) => r.status === "failed").length;
   const [detailReport, setDetailReport] = useState<GeneratedReport | null>(null);
   const [schedFreq, setSchedFreq] = useState<"daily" | "weekly" | "monthly">("weekly");
-
-  const metricSeries = useMemo(() => ({
-    generated: makeMetricSeries(36, 42, 8),
-    scheduled: makeMetricSeries(36, 18, 4),
-    failed: makeMetricSeries(36, 3, 2),
-    downloads: makeMetricSeries(36, 120, 20),
-  }), []);
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -126,10 +126,10 @@ function ReportsPage() {
 
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Generated (30d)" value={42} delta={{ v: "8%", up: true }} icon={FileDown} tone="info" series={metricSeries.generated} />
-        <MetricCard label="Scheduled" value={5} icon={Calendar} tone="default" series={metricSeries.scheduled} />
-        <MetricCard label="Failed" value={3} delta={{ v: "1", up: true }} icon={AlertTriangle} tone="critical" series={metricSeries.failed} />
-        <MetricCard label="Downloads (30d)" value="1,204" delta={{ v: "14%", up: true }} icon={Download} tone="healthy" series={metricSeries.downloads} />
+        <MetricCard label="Generated" value={isLoading ? "…" : generatedReports.length} icon={FileDown} tone="info" />
+        <MetricCard label="Scheduled" value={SCHEDULED_REPORTS.length} icon={Calendar} tone="default" />
+        <MetricCard label="Failed" value={isLoading ? "…" : failedCount} icon={AlertTriangle} tone="critical" />
+        <MetricCard label="Ready" value={isLoading ? "…" : generatedReports.filter((r) => r.status === "ready").length} icon={Download} tone="healthy" />
       </div>
 
       {/* Tabs */}
@@ -198,7 +198,10 @@ function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {GENERATED_REPORTS.map((r) => (
+                  {generatedReports.length === 0 && !isLoading && (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No reports yet.</td></tr>
+                  )}
+                  {generatedReports.map((r) => (
                     <tr
                       key={r.id}
                       onClick={() => setDetailReport(r)}

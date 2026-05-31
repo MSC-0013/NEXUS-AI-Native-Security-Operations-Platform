@@ -67,6 +67,27 @@ export const securityEvents = pgTable("security_events", {
   rawData: jsonb("raw_data").default({}),
 });
 
+export const alertRules = pgTable("alert_rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  createdBy: uuid("created_by"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  query: text("query").notNull(),
+  severity: varchar("severity", { length: 20 }).notNull(),
+  mitreTactics: jsonb("mitre_tactics").default([]),
+  mitreTechniques: jsonb("mitre_techniques").default([]),
+  dataSources: jsonb("data_sources").default([]),
+  runFrequencyMinutes: integer("run_frequency_minutes").default(5),
+  lookbackMinutes: integer("lookback_minutes").default(60),
+  thresholdCount: integer("threshold_count").default(1),
+  isEnabled: boolean("is_enabled").default(true),
+  falsePositiveCount: integer("false_positive_count").default(0),
+  truePositiveCount: integer("true_positive_count").default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
 export const alerts = pgTable("alerts", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
@@ -110,6 +131,33 @@ export const incidentTimeline = pgTable("incident_timeline", {
   actorName: varchar("actor_name", { length: 255 }),
   actionType: varchar("action_type", { length: 100 }).notNull(),
   description: text("description").notNull(),
+});
+
+export const incidentComments = pgTable("incident_comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  incidentId: uuid("incident_id").notNull().references(() => incidents.id),
+  authorId: uuid("author_id"),
+  content: text("content").notNull(),
+  isSystemGenerated: boolean("is_system_generated").default(false),
+  parentCommentId: uuid("parent_comment_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const incidentEvidence = pgTable("incident_evidence", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  incidentId: uuid("incident_id").notNull().references(() => incidents.id),
+  addedBy: uuid("added_by"),
+  type: varchar("type", { length: 50 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  fileName: varchar("file_name", { length: 255 }),
+  fileSizeBytes: integer("file_size_bytes"),
+  mimeType: varchar("mime_type", { length: 100 }),
+  storageUri: text("storage_uri"),
+  hashSha256: varchar("hash_sha256", { length: 64 }),
+  isSensitive: boolean("is_sensitive").default(false),
+  addedAt: timestamp("added_at", { withTimezone: true }).defaultNow(),
 });
 
 export const incidentRecommendations = pgTable("incident_recommendations", {

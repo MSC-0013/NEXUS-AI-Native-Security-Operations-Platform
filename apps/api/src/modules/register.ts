@@ -12,6 +12,8 @@ import { websocketRoutes } from "./realtime/websocket.routes.js";
 import { endpointsRoutes } from "./endpoints/endpoints.routes.js";
 import { vulnerabilitiesRoutes } from "./vulnerabilities/vulnerabilities.routes.js";
 import { threatIntelRoutes } from "./threat-intel/threat-intel.routes.js";
+import { huntRoutes } from "./hunt/hunt.routes.js";
+import { forensicsRoutes } from "./forensics/forensics.routes.js";
 import { cloudRoutes } from "./cloud/cloud.routes.js";
 import { networkRoutes } from "./network/network.routes.js";
 import { knowledgeRoutes } from "./knowledge/knowledge.routes.js";
@@ -27,6 +29,7 @@ import { developerRoutes } from "./developer/developer.routes.js";
 import { integrationsRoutes } from "./integrations/integrations.routes.js";
 import { organizationsRoutes } from "./organizations/organizations.routes.js";
 import { usersRoutes } from "./users/users.routes.js";
+import { detectionRulesRoutes } from "./detection-rules/detection-rules.routes.js";
 
 export async function registerApiRoutes(app: FastifyInstance) {
   await app.register(authRoutes);
@@ -42,6 +45,8 @@ export async function registerApiRoutes(app: FastifyInstance) {
   await app.register(endpointsRoutes);
   await app.register(vulnerabilitiesRoutes);
   await app.register(threatIntelRoutes);
+  await app.register(huntRoutes);
+  await app.register(forensicsRoutes);
   await app.register(cloudRoutes);
   await app.register(networkRoutes);
   await app.register(knowledgeRoutes);
@@ -57,4 +62,5 @@ export async function registerApiRoutes(app: FastifyInstance) {
   await app.register(integrationsRoutes);
   await app.register(organizationsRoutes);
   await app.register(usersRoutes);
+  await app.register(detectionRulesRoutes);
 }

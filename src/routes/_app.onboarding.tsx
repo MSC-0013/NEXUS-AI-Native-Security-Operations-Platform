@@ -1,10 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ArrowRight, ArrowLeft, Check, Cloud, Laptop, Plug, Bell, Rocket, Building2, Globe, Users, Copy, Mail, MessageSquare, CircleAlert as AlertCircle, Webhook, Shield, Database, GitBranch, FingerprintPattern as Fingerprint } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/lib/auth-store";
+import { useCurrentOrg, useIntegrations } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/onboarding")({
   head: () => ({
@@ -65,9 +66,14 @@ function OnboardingPage() {
   const [step, setStep] = useState(1);
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { data: org } = useCurrentOrg();
+  const { data: integrationsData } = useIntegrations();
+  const connectedIntegrations = integrationsData?.items ?? [];
 
-  // Step 1 state
   const [workspaceName, setWorkspaceName] = useState(user?.workspace ?? "");
+  useEffect(() => {
+    if (org?.name) setWorkspaceName(org.name);
+  }, [org?.name]);
   const [region, setRegion] = useState("us-east-1");
   const [teamSize, setTeamSize] = useState("6-20");
 

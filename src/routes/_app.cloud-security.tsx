@@ -4,7 +4,7 @@ import { Cloud, CloudOff, Database, Globe, Lock, TriangleAlert as AlertTriangle,
 import { cn } from "@/lib/utils";
 import { SeverityBadge, SeverityDot } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useCloudSummary, useCloudResources, useCloudAccounts, useCloudIamFindings, useCloudStorageBuckets, useCloudCompliance } from "@/lib/api-hooks";
 import { Progress } from "@/components/ui/progress";
 import { useInspector } from "@/lib/inspector-store";
 import { formatDistanceToNow } from "date-fns";
@@ -15,121 +15,11 @@ export const Route = createFileRoute("/_app/cloud-security")({
   component: CloudSecurityPage,
 });
 
-/* ------------------------------------------------------------------ */
-/*  Static data                                                        */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────────────── */
+/* Helpers                                                              */
+/* ──────────────────────────────────────────────────────────────────── */
 
 type Exposure = "public" | "internal" | "private";
-
-interface CloudResource {
-  id: string;
-  name: string;
-  type: string;
-  cloud: "AWS" | "Azure" | "GCP";
-  account: string;
-  region: string;
-  exposure: Exposure;
-  severity: Severity;
-  finding: string;
-  age: string;
-  ageMs: number;
-}
-
-interface CloudAccount {
-  id: string;
-  name: string;
-  provider: "AWS" | "Azure" | "GCP";
-  resources: number;
-  riskScore: number;
-  criticalFindings: number;
-  highFindings: number;
-  compliance: { framework: string; score: number }[];
-  regions: string[];
-}
-
-interface IAMPolicyFinding {
-  id: string;
-  type: "overprivileged" | "wildcard" | "unused_credential" | "cross_account";
-  principal: string;
-  account: string;
-  detail: string;
-  severity: Severity;
-  age: string;
-}
-
-interface StorageBucket {
-  id: string;
-  name: string;
-  cloud: "AWS" | "Azure" | "GCP";
-  account: string;
-  publicAccess: boolean;
-  encrypted: boolean;
-  piiDetected: boolean;
-  severity: Severity;
-  region: string;
-}
-
-const RESOURCES: CloudResource[] = [
-  { id: "r1", name: "s3://acme-analytics-raw", type: "S3 Bucket", cloud: "AWS", account: "prod-data-872", region: "us-east-1", exposure: "public", severity: "critical", finding: "S3 bucket public-readable w/ PII", age: "2d", ageMs: 2 * 86400000 },
-  { id: "r2", name: "snap-0af23…", type: "RDS Snapshot", cloud: "AWS", account: "prod-data-872", region: "us-east-1", exposure: "public", severity: "critical", finding: "RDS snapshot shared publicly", age: "5h", ageMs: 5 * 3600000 },
-  { id: "r3", name: "gs://acme-reports", type: "GCS Bucket", cloud: "GCP", account: "growth-prod", region: "us-central1", exposure: "public", severity: "high", finding: "GCS bucket allUsers viewer", age: "1d", ageMs: 86400000 },
-  { id: "r4", name: "saacmecorp01", type: "Storage Account", cloud: "Azure", account: "corp-it-01", region: "eastus", exposure: "internal", severity: "high", finding: "Storage account w/o private endpoint", age: "3d", ageMs: 3 * 86400000 },
-  { id: "r5", name: "deploy-bot", type: "IAM User", cloud: "AWS", account: "sandbox-12", region: "us-west-2", exposure: "internal", severity: "high", finding: "IAM user with AdministratorAccess", age: "12d", ageMs: 12 * 86400000 },
-  { id: "r6", name: "eks-prod-eu-1", type: "EKS Cluster", cloud: "AWS", account: "platform-eu", region: "eu-west-1", exposure: "public", severity: "medium", finding: "EKS cluster public API endpoint", age: "1d", ageMs: 86400000 },
-  { id: "r7", name: "acme-ml-training", type: "S3 Bucket", cloud: "AWS", account: "ml-research", region: "us-west-2", exposure: "private", severity: "healthy", finding: "Properly configured", age: "—", ageMs: 0 },
-  { id: "r8", name: "kv-acme-prod", type: "Key Vault", cloud: "Azure", account: "corp-it-01", region: "eastus", exposure: "private", severity: "healthy", finding: "Soft delete enabled", age: "—", ageMs: 0 },
-  { id: "r9", name: "bigquery-datasets", type: "BigQuery Dataset", cloud: "GCP", account: "growth-prod", region: "us-central1", exposure: "internal", severity: "medium", finding: "Dataset shared with all authenticated users", age: "4d", ageMs: 4 * 86400000 },
-  { id: "r10", name: "lambda-processor-prod", type: "Lambda Function", cloud: "AWS", account: "prod-data-872", region: "us-east-1", exposure: "public", severity: "high", finding: "Lambda function with public invoke permission", age: "6h", ageMs: 6 * 3600000 },
-  { id: "r11", name: "nic-frontend-pub", type: "Network Interface", cloud: "Azure", account: "corp-it-01", region: "westeurope", exposure: "public", severity: "medium", finding: "Public IP attached to backend subnet NIC", age: "2d", ageMs: 2 * 86400000 },
-  { id: "r12", name: "gke-staging-01", type: "GKE Cluster", cloud: "GCP", account: "staging-01", region: "europe-west1", exposure: "internal", severity: "healthy", finding: "Private cluster, authorized networks only", age: "—", ageMs: 0 },
-];
-
-const ACCOUNTS: CloudAccount[] = [
-  { id: "a1", name: "prod-data-872", provider: "AWS", resources: 42180, riskScore: 82, criticalFindings: 14, highFindings: 47, compliance: [{ framework: "CIS", score: 68 }, { framework: "SOC2", score: 74 }, { framework: "PCI", score: 62 }], regions: ["us-east-1", "us-west-2", "eu-west-1"] },
-  { id: "a2", name: "platform-eu", provider: "AWS", resources: 18740, riskScore: 61, criticalFindings: 3, highFindings: 22, compliance: [{ framework: "CIS", score: 82 }, { framework: "SOC2", score: 88 }, { framework: "PCI", score: 79 }], regions: ["eu-west-1", "eu-central-1"] },
-  { id: "a3", name: "sandbox-12", provider: "AWS", resources: 8920, riskScore: 74, criticalFindings: 5, highFindings: 31, compliance: [{ framework: "CIS", score: 71 }, { framework: "SOC2", score: 65 }, { framework: "PCI", score: 58 }], regions: ["us-west-2"] },
-  { id: "a4", name: "corp-it-01", provider: "Azure", resources: 31260, riskScore: 55, criticalFindings: 2, highFindings: 18, compliance: [{ framework: "CIS", score: 84 }, { framework: "SOC2", score: 91 }, { framework: "PCI", score: 86 }], regions: ["eastus", "westeurope"] },
-  { id: "a5", name: "growth-prod", provider: "GCP", resources: 12880, riskScore: 68, criticalFindings: 4, highFindings: 26, compliance: [{ framework: "CIS", score: 77 }, { framework: "SOC2", score: 80 }, { framework: "PCI", score: 72 }], regions: ["us-central1", "europe-west1"] },
-  { id: "a6", name: "ml-research", provider: "AWS", resources: 5640, riskScore: 38, criticalFindings: 0, highFindings: 5, compliance: [{ framework: "CIS", score: 91 }, { framework: "SOC2", score: 94 }, { framework: "PCI", score: 88 }], regions: ["us-west-2"] },
-  { id: "a7", name: "staging-01", provider: "GCP", resources: 3420, riskScore: 29, criticalFindings: 0, highFindings: 3, compliance: [{ framework: "CIS", score: 93 }, { framework: "SOC2", score: 96 }, { framework: "PCI", score: 91 }], regions: ["europe-west1"] },
-];
-
-const IAM_FINDINGS: IAMPolicyFinding[] = [
-  { id: "iam1", type: "overprivileged", principal: "deploy-bot", account: "sandbox-12", detail: "AdministratorAccess policy attached", severity: "high", age: "12d" },
-  { id: "iam2", type: "wildcard", principal: "lambda-exec-role", account: "prod-data-872", detail: "s3:* on resource arn:*", severity: "critical", age: "3d" },
-  { id: "iam3", type: "unused_credential", principal: "svc-legacy-api", account: "platform-eu", detail: "Access key unused for 90+ days", severity: "medium", age: "90d" },
-  { id: "iam4", type: "cross_account", principal: "ext-contractor-role", account: "prod-data-872", detail: "Cross-account assume role from 3rd party", severity: "high", age: "7d" },
-  { id: "iam5", type: "wildcard", principal: "cloudfunc-admin", account: "growth-prod", detail: "*:* on all resources", severity: "critical", age: "1d" },
-  { id: "iam6", type: "overprivileged", principal: "terraform-apply", account: "sandbox-12", detail: "PowerUserAccess + IAM full access", severity: "high", age: "5d" },
-  { id: "iam7", type: "unused_credential", principal: "old-backup-svc", account: "corp-it-01", detail: "Service principal inactive 60+ days", severity: "medium", age: "60d" },
-  { id: "iam8", type: "cross_account", principal: "partner-read-role", account: "platform-eu", detail: "Read access from external AWS account", severity: "medium", age: "14d" },
-];
-
-const STORAGE_BUCKETS: StorageBucket[] = [
-  { id: "b1", name: "acme-analytics-raw", cloud: "AWS", account: "prod-data-872", publicAccess: true, encrypted: true, piiDetected: true, severity: "critical", region: "us-east-1" },
-  { id: "b2", name: "acme-reports", cloud: "GCP", account: "growth-prod", publicAccess: true, encrypted: true, piiDetected: false, severity: "high", region: "us-central1" },
-  { id: "b3", name: "acme-ml-training", cloud: "AWS", account: "ml-research", publicAccess: false, encrypted: true, piiDetected: false, severity: "healthy", region: "us-west-2" },
-  { id: "b4", name: "corp-backups-01", cloud: "Azure", account: "corp-it-01", publicAccess: false, encrypted: false, piiDetected: true, severity: "high", region: "eastus" },
-  { id: "b5", name: "acme-static-assets", cloud: "AWS", account: "platform-eu", publicAccess: true, encrypted: true, piiDetected: false, severity: "medium", region: "eu-west-1" },
-  { id: "b6", name: "acme-logs-archive", cloud: "GCP", account: "staging-01", publicAccess: false, encrypted: true, piiDetected: false, severity: "healthy", region: "europe-west1" },
-  { id: "b7", name: "acme-finance-data", cloud: "AWS", account: "prod-data-872", publicAccess: false, encrypted: true, piiDetected: true, severity: "medium", region: "us-east-1" },
-  { id: "b8", name: "acme-dev-drops", cloud: "Azure", account: "corp-it-01", publicAccess: true, encrypted: false, piiDetected: false, severity: "high", region: "westeurope" },
-];
-
-const REGIONS: { code: string; label: string; provider: string; resources: number; healthy: number; critical: number }[] = [
-  { code: "us-east-1", label: "US East (N. Virginia)", provider: "AWS", resources: 38420, healthy: 94, critical: 11 },
-  { code: "us-west-2", label: "US West (Oregon)", provider: "AWS", resources: 14560, healthy: 97, critical: 5 },
-  { code: "eu-west-1", label: "EU (Ireland)", provider: "AWS", resources: 18740, healthy: 92, critical: 3 },
-  { code: "eu-central-1", label: "EU (Frankfurt)", provider: "AWS", resources: 4210, healthy: 98, critical: 0 },
-  { code: "eastus", label: "East US", provider: "Azure", resources: 22140, healthy: 95, critical: 2 },
-  { code: "westeurope", label: "West Europe", provider: "Azure", resources: 9120, healthy: 96, critical: 1 },
-  { code: "us-central1", label: "US Central (Iowa)", provider: "GCP", resources: 9840, healthy: 91, critical: 4 },
-  { code: "europe-west1", label: "Europe West (Belgium)", provider: "GCP", resources: 6460, healthy: 94, critical: 0 },
-];
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
 
 const EXPOSURE_STYLES: Record<Exposure, string> = {
   public: "bg-critical/15 text-critical border-critical/40",
@@ -164,7 +54,7 @@ function complianceTone(score: number): Severity {
   return "critical";
 }
 
-const IAM_TYPE_LABEL: Record<IAMPolicyFinding["type"], string> = {
+const IAM_TYPE_LABEL: Record<string, string> = {
   overprivileged: "Overprivileged",
   wildcard: "Wildcard Policy",
   unused_credential: "Unused Credential",
@@ -177,20 +67,27 @@ const PROVIDER_BADGE: Record<string, string> = {
   GCP: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
 };
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────────────────────────────────────────── */
+/* Component                                                            */
+/* ──────────────────────────────────────────────────────────────────── */
 
 function CloudSecurityPage() {
-  const seriesAccounts = useMemo(() => makeMetricSeries(48, 47, 2), []);
-  const seriesResources = useMemo(() => makeMetricSeries(48, 184, 20), []);
-  const seriesCritical = useMemo(() => makeMetricSeries(48, 312, 30), []);
-  const seriesBuckets = useMemo(() => makeMetricSeries(48, 8, 3), []);
-  const seriesEncrypted = useMemo(() => makeMetricSeries(48, 99, 1), []);
-
-  const publicBuckets = STORAGE_BUCKETS.filter((b) => b.publicAccess).length;
-  const unencryptedBuckets = STORAGE_BUCKETS.filter((b) => !b.encrypted).length;
-  const piiBuckets = STORAGE_BUCKETS.filter((b) => b.piiDetected).length;
+  const { data: summary, isLoading: summaryLoading } = useCloudSummary();
+  const { data: resourcesData, isLoading: resourcesLoading } = useCloudResources();
+  const { data: accountsData, isLoading: accountsLoading } = useCloudAccounts();
+  const { data: iamFindingsData, isLoading: iamFindingsLoading } = useCloudIamFindings();
+  const { data: storageBucketsData, isLoading: storageBucketsLoading } = useCloudStorageBuckets();
+  const { data: complianceData, isLoading: complianceLoading } = useCloudCompliance();
+  
+  const resources = resourcesData?.items ?? [];
+  const accounts = accountsData?.items ?? summary?.accounts ?? [];
+  const iamFindings = iamFindingsData?.items ?? [];
+  const buckets = storageBucketsData?.items ?? [];
+  const compliance = complianceData?.items ?? [];
+  
+  const publicBuckets = buckets.filter((b) => b.publicAccess).length;
+  const criticalResources = resources.filter((r) => r.severity === "critical").length;
+  const highResources = resources.filter((r) => r.severity === "high").length;
 
   return (
     <div className="flex flex-col gap-5 p-5 min-h-full">
@@ -207,29 +104,25 @@ function CloudSecurityPage() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <MetricCard label="Accounts" value={47} icon={Server} tone="default" series={seriesAccounts} />
-        <MetricCard label="Resources" value="184k" icon={Database} tone="info" series={seriesResources} />
+        <MetricCard label="Accounts" value={summary?.accountCount ?? (isLoading ? "…" : accounts.length)} icon={Server} tone="default" />
+        <MetricCard label="Resources" value={summary ? String(summary.totalAssets) : isLoading ? "…" : "—"} icon={Database} tone="info" />
         <MetricCard
-          label="Critical findings"
-          value={312}
+          label="Open findings"
+          value={summary?.openFindings ?? (isLoading ? "…" : "—")}
           icon={ShieldAlert}
           tone="critical"
-          series={seriesCritical}
-          delta={{ v: "11", up: true }}
         />
         <MetricCard
           label="Public buckets"
           value={publicBuckets}
           icon={CloudOff}
           tone="high"
-          series={seriesBuckets}
         />
         <MetricCard
-          label="Encrypted (rest)"
-          value="99.1%"
+          label="Avg risk"
+          value={summary ? `${summary.avgRisk}%` : isLoading ? "…" : "—"}
           icon={Lock}
           tone="healthy"
-          series={seriesEncrypted}
         />
       </div>
 
@@ -239,7 +132,7 @@ function CloudSecurityPage() {
         <div className="lg:col-span-4 flex flex-col gap-3">
           <SectionHeader icon={Server} title="Cloud Accounts" subtitle="Risk score per account" />
           <div className="flex flex-col gap-2 overflow-y-auto max-h-[680px] pr-1">
-            {ACCOUNTS.map((acct) => (
+            {accounts.map((acct) => (
               <AccountCard key={acct.id} account={acct} />
             ))}
           </div>

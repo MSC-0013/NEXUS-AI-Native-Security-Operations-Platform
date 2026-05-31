@@ -20,4 +20,20 @@ export async function threatIntelRoutes(app: FastifyInstance) {
     const items = await service.listIocs(getUser(request).orgId);
     return reply.send({ items });
   });
+
+  app.get("/v1/threat-intel/ransomware", {
+    preHandler: authGuard(app.env, "view:threat-intel"),
+  }, async (request, reply) => {
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(20).default(12) }).parse(request.query);
+    const items = await service.listRansomware(getUser(request).orgId, q.limit);
+    return reply.send({ items });
+  });
+
+  app.get("/v1/threat-intel/campaigns", {
+    preHandler: authGuard(app.env, "view:threat-intel"),
+  }, async (request, reply) => {
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(20).default(10) }).parse(request.query);
+    const items = await service.listCampaigns(getUser(request).orgId, q.limit);
+    return reply.send({ items });
+  });
 }

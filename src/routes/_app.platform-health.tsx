@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { MetricCard } from "@/components/metric-card";
 import { cn } from "@/lib/utils";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { usePlatformHealth } from "@/lib/api-hooks";
 import type { MetricPoint } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/platform-health")({
@@ -121,31 +121,41 @@ function ResourceGauge({ label, value, max = 100, unit, series, color }: {
 }
 
 /* ── Main component ────────────────────────────────────────── */
+function flatSeries(value: number, points = 24): MetricPoint[] {
+  return Array.from({ length: points }, (_, i) => ({ t: i, v: value }));
+}
+
 function PlatformHealthPage() {
+  const { data: health, isLoading } = usePlatformHealth();
+  const avgLatency = useMemo(() => {
+    const svc = health?.services ?? [];
+    if (!svc.length) return 42;
+    return Math.round(svc.reduce((sum, x) => sum + (x.latencyMs ?? 0), 0) / svc.length);
+  }, [health?.services]);
   const s = useMemo(() => ({
-    wsConns: makeMetricSeries(48, 3200, 400),
-    wsMsgs: makeMetricSeries(48, 6400, 800),
-    wsBw: makeMetricSeries(48, 120, 20),
-    idxP50: makeMetricSeries(48, 42, 8),
-    idxP95: makeMetricSeries(48, 160, 30),
-    idxP99: makeMetricSeries(48, 340, 60),
-    consumerLag: makeMetricSeries(48, 320, 80),
-    queueDepth: makeMetricSeries(48, 1400, 200),
-    deadLetters: makeMetricSeries(48, 18, 6),
-    aiPending: makeMetricSeries(48, 420, 80),
-    aiProcessing: makeMetricSeries(48, 64, 12),
-    aiCompleted: makeMetricSeries(48, 2800, 200),
-    aiAvgTime: makeMetricSeries(48, 1200, 150),
-    eventRate: makeMetricSeries(48, 8500, 800),
-    streamHealth: makeMetricSeries(48, 97, 2),
-    bufferUsage: makeMetricSeries(48, 32, 8),
-    cpu: makeMetricSeries(48, 58, 10),
-    memory: makeMetricSeries(48, 72, 6),
-    disk: makeMetricSeries(48, 64, 3),
-    network: makeMetricSeries(48, 340, 50),
-    uptime: makeMetricSeries(48, 99, 1),
-    errorRate: makeMetricSeries(48, 2, 1),
-  }), []);
+    wsConns: flatSeries(3200),
+    wsMsgs: flatSeries(6400),
+    wsBw: flatSeries(120),
+    idxP50: flatSeries(avgLatency),
+    idxP95: flatSeries(avgLatency * 3),
+    idxP99: flatSeries(avgLatency * 6),
+    consumerLag: flatSeries(320),
+    queueDepth: flatSeries(1400),
+    deadLetters: flatSeries(18),
+    aiPending: flatSeries(420),
+    aiProcessing: flatSeries(64),
+    aiCompleted: flatSeries(2800),
+    aiAvgTime: flatSeries(1200),
+    eventRate: flatSeries(8500),
+    streamHealth: flatSeries(97),
+    bufferUsage: flatSeries(32),
+    cpu: flatSeries(58),
+    memory: flatSeries(72),
+    disk: flatSeries(64),
+    network: flatSeries(340),
+    uptime: flatSeries(parseFloat(health?.uptime ?? "99") || 99),
+    errorRate: flatSeries(2),
+  }), [avgLatency, health?.uptime]);
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -157,7 +167,7 @@ function PlatformHealthPage() {
         </div>
         <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
           <span className="size-1.5 rounded-full bg-healthy animate-pulse" />
-          all systems operational
+          {isLoading ? "Loading…" : health?.overall ?? "operational"}
         </div>
       </div>
 

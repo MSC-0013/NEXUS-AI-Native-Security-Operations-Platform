@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Briefcase, Clock, CircleCheck as CheckCircle, TriangleAlert as AlertTriangle, User, Link, Shield, ChevronRight, FileText, Activity, ListChecks, Gavel, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { formatDistanceToNow } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useCases } from "@/lib/api-hooks";
 import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/cases")({
@@ -253,15 +253,55 @@ const CASES: CaseData[] = [
 
 /* ── component ── */
 
-function CasesPage() {
-  const [selectedId, setSelectedId] = useState("case-1");
-  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
-  const sel = CASES.find((c) => c.id === selectedId) ?? CASES[0];
+function mapCaseStatus(s: string): CaseStatus {
+  if (s === "in_progress" || s === "investigating") return "in_progress";
+  if (s === "review" || s === "pending_review") return "review";
+  if (s === "closed" || s === "resolved") return "closed";
+  return "open";
+}
 
-  const openCt = CASES.filter((c) => c.status === "open").length;
-  const inProgressCt = CASES.filter((c) => c.status === "in_progress").length;
-  const reviewCt = CASES.filter((c) => c.status === "review").length;
-  const breachedCt = CASES.filter((c) => c.slaBreached).length;
+function CasesPage() {
+  const { data: casesData, isLoading } = useCases();
+  const casesList: CaseData[] = useMemo(() => {
+    const items = casesData?.items ?? [];
+    if (items.length === 0) return CASES;
+    return items.map((c) => ({
+      id: c.id,
+      code: c.caseNumber,
+      title: c.title,
+      severity: (c.priority === "critical" ? "critical" : c.priority === "high" ? "high" : "medium") as Severity,
+      status: mapCaseStatus(c.status),
+      assignee: c.owner,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      slaDeadline: new Date(Date.now() + 86400000).toISOString(),
+      slaBreached: false,
+      workflowStep: "triage" as WorkflowStep,
+      linkedAlerts: [],
+      linkedIncidents: [],
+      endpoints: [],
+      evidence: [],
+      activityFeed: [],
+      remediationChecklist: [],
+    }));
+  }, [casesData]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveId = selectedId ?? casesList[0]?.id ?? "";
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const sel = casesList.find((c) => c.id === effectiveId) ?? casesList[0];
+
+  const openCt = casesList.filter((c) => c.status === "open").length;
+  const inProgressCt = casesList.filter((c) => c.status === "in_progress").length;
+  const reviewCt = casesList.filter((c) => c.status === "review").length;
+  const breachedCt = casesList.filter((c) => c.slaBreached).length;
+
+  if (!sel) {
+    return (
+      <div className="p-12 text-center text-muted-foreground">
+        {isLoading ? "Loading cases…" : "No cases found."}
+      </div>
+    );
+  }
 
   const toggleCheck = (id: string) => setCheckedItems((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -281,7 +321,7 @@ function CasesPage() {
           <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Response / Cases</div>
           <h1 className="text-xl font-semibold tracking-tight mt-0.5">Cases</h1>
           <div className="grid grid-cols-4 gap-2 mt-3">
-            <MetricCard label="Open" value={openCt} icon={Briefcase} tone="critical" series={makeMetricSeries(24, openCt, 1)} />
+            <MetricCard label="Open" value={openCt} icon={Briefcase} tone="critical" />
             <MetricCard label="In Progress" value={inProgressCt} icon={Activity} tone="high" />
             <MetricCard label="Review" value={reviewCt} icon={Shield} tone="info" />
             <MetricCard label="SLA Breach" value={breachedCt} icon={AlertTriangle} tone={breachedCt > 0 ? "critical" : "healthy"} />
@@ -289,10 +329,10 @@ function CasesPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {CASES.map((c) => (
+          {casesList.map((c) => (
             <button key={c.id} onClick={() => setSelectedId(c.id)}
               className={cn("w-full text-left px-4 py-3 border-b border-border/60 transition-colors",
-                selectedId === c.id ? "bg-surface-2/80 border-l-2 border-l-primary" : "hover:bg-surface-2/40",
+                effectiveId === c.id ? "bg-surface-2/80 border-l-2 border-l-primary" : "hover:bg-surface-2/40",
               )}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">

@@ -4,6 +4,8 @@ import { Bot, BrainCircuit, MessageSquare, Send, Sparkles, User, Wand2, Zap } fr
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-store";
 import { apiFetch, apiStream } from "@/lib/api-client";
+import { useCopilotSessions } from "@/lib/api-hooks";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/copilot")({
   head: () => ({ meta: [{ title: "AI Copilot — NEXUS" }] }),
@@ -25,33 +27,10 @@ const SUGGESTIONS = [
   "Cluster the latest 480 brute-force alerts",
 ];
 
-const RESPONSES: Record<string, string> = {
-  default:
-    "I analyzed the relevant telemetry across EDR, identity, and cloud control planes. Here is what I found:\n\n• 3 correlated signals match the MITRE T1078 pattern over the past 4h.\n• Two endpoints show beaconing to a domain registered <72h ago.\n• Recommended next step: isolate edge-7f2a and revoke the impacted Okta session.\n\nWant me to draft a containment runbook and open an incident?",
-  incident:
-    "INC-1042 — Privileged IAM role attached outside change window.\n\n• Severity: HIGH. Actor: build-runner-44 via OIDC.\n• Blast radius: aws-prod root + secrets-vault (2 crown jewels reachable).\n• Containment: revoke role binding, rotate trust policy, force re-auth on linked identities.\n\nProposed playbook: aws.revoke_role → vault.rotate → notify #soc-prod. Run it?",
-  rule:
-    "```yaml\ntitle: LSASS Access via rundll32\nid: 4f1c-detect-rundll32-lsass\nstatus: experimental\nlogsource:\n  product: windows\n  category: process_access\ndetection:\n  selection:\n    SourceImage|endswith: '\\rundll32.exe'\n    TargetImage|endswith: '\\lsass.exe'\n    GrantedAccess: '0x1410'\n  condition: selection\nlevel: high\n```\n\nDeploy to staging tenant?",
-  asn:
-    "Found 41 logins from 7 newly-observed ASNs in the last 24h:\n\n• AS208861 (BulletProof) — 19 successes, 12 distinct identities\n• AS215311 (residential proxy) — 8 successes, 2 admin accounts\n• 4 others below threshold\n\nFlagging k.morgan and j.okafor for impossible-travel review.",
-  cve:
-    "CVE-2024-3094 reachability analysis (xz-utils backdoor):\n\n• 4 reachable paths from internet → vulnerable hosts.\n• Highest-risk: edge-lb-prod-02 → build-runner-44 (sshd 9.4p1 affected).\n• 12 hosts patched, 3 pending. Compensating control: WAF block on stage-2 payload signature.",
-  cluster:
-    "Clustered 480 brute-force alerts into 12 incidents:\n\n• 7 attributed to known BulletProof ASN ranges (auto-suppressed).\n• 3 targeted SSO endpoints — escalated to tier-2.\n• 2 novel patterns — opened INC-1138, INC-1139 for review.\nReduced analyst load by ~94%.",
-};
-
-function pickResponse(prompt: string): string {
-  const p = prompt.toLowerCase();
-  if (p.includes("inc-") || p.includes("incident")) return RESPONSES.incident;
-  if (p.includes("sigma") || p.includes("rule") || p.includes("detection")) return RESPONSES.rule;
-  if (p.includes("asn") || p.includes("login")) return RESPONSES.asn;
-  if (p.includes("cve") || p.includes("reach")) return RESPONSES.cve;
-  if (p.includes("cluster") || p.includes("brute")) return RESPONSES.cluster;
-  return RESPONSES.default;
-}
-
 function CopilotPage() {
   const user = useAuth((s) => s.user);
+  const { data: sessionsData } = useCopilotSessions();
+  const sessions = sessionsData?.items ?? [];
   const sessionIdRef = useRef<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([
     {
@@ -76,40 +55,35 @@ function CopilotPage() {
     const aId = crypto.randomUUID();
     setMsgs((m) => [...m, userMsg, { id: aId, role: "assistant", text: "", streaming: true }]);
 
-    const streamMock = async () => {
-      const full = pickResponse(text);
-      for (let i = 1; i <= full.length; i++) {
-        await new Promise((r) => setTimeout(r, 8));
-        setMsgs((m) => m.map((x) => (x.id === aId ? { ...x, text: full.slice(0, i) } : x)));
-      }
-    };
-
     try {
-      if (user) {
-        if (!sessionIdRef.current) {
-          const session = await apiFetch<{ id: string }>("/v1/copilot/sessions", {
-            method: "POST",
-            body: JSON.stringify({ title: text.slice(0, 80) }),
-          });
-          sessionIdRef.current = session.id;
-        }
-
-        await apiStream(
-          `/v1/copilot/sessions/${sessionIdRef.current}/messages`,
-          { content: text },
-          (event) => {
-            if (event.type === "token" && typeof event.data === "string") {
-              setMsgs((m) =>
-                m.map((x) => (x.id === aId ? { ...x, text: x.text + event.data } : x)),
-              );
-            }
-          },
-        );
-      } else {
-        await streamMock();
+      if (!user) {
+        toast.error("Sign in to use Copilot");
+        setMsgs((m) => m.filter((x) => x.id !== aId));
+        setBusy(false);
+        return;
       }
+      if (!sessionIdRef.current) {
+        const session = await apiFetch<{ id: string }>("/v1/copilot/sessions", {
+          method: "POST",
+          body: JSON.stringify({ title: text.slice(0, 80) }),
+        });
+        sessionIdRef.current = session.id;
+      }
+
+      await apiStream(
+        `/v1/copilot/sessions/${sessionIdRef.current}/messages`,
+        { content: text },
+        (event) => {
+          if (event.type === "token" && typeof event.data === "string") {
+            setMsgs((m) =>
+              m.map((x) => (x.id === aId ? { ...x, text: x.text + event.data } : x)),
+            );
+          }
+        },
+      );
     } catch {
-      await streamMock();
+      toast.error("Copilot request failed. Try again.");
+      setMsgs((m) => m.filter((x) => x.id !== aId));
     }
 
     setMsgs((m) => m.map((x) => (x.id === aId ? { ...x, streaming: false } : x)));
@@ -199,11 +173,18 @@ function CopilotPage() {
             <KV k="nexus-detector-v1" v="rule synth" />
             <KV k="embedding-large" v="retrieval" />
           </SidebarSection>
-          <SidebarSection title="Today" icon={MessageSquare}>
-            <KV k="Sessions" v="412" />
-            <KV k="Auto-triaged" v="1,204" />
-            <KV k="Detections" v="31" />
-            <KV k="Spend" v="$48.20" />
+          <SidebarSection title="Sessions" icon={MessageSquare}>
+            {sessions.length === 0 && <div className="text-xs text-muted-foreground">No sessions yet</div>}
+            {sessions.slice(0, 8).map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => { sessionIdRef.current = s.id; }}
+                className="w-full text-left text-xs truncate rounded px-1 py-1 hover:bg-surface-2"
+              >
+                {s.title ?? `Session ${s.id.slice(0, 8)}`} · {s.messageCount} msgs
+              </button>
+            ))}
           </SidebarSection>
         </aside>
       </div>

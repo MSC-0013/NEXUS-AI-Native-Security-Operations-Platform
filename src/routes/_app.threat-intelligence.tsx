@@ -16,8 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
-import { useInspector } from "@/lib/inspector-store";
+import { useThreatActors, useThreatIocs, useThreatRansomware, useThreatCampaigns, useVulnerabilities } from "@/lib/api-hooks";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { Severity } from "@/lib/mock/types";
@@ -114,13 +113,35 @@ const IOC_TYPE_ICON: Record<string, typeof Tag> = { IP: Globe, domain: Globe, ha
 
 function ThreatIntelligencePage() {
   const [activeTab, setActiveTab] = useState("actors");
-
-  const kpiSeries = {
-    iocs: makeMetricSeries(24, 280, 15),
-    actors: makeMetricSeries(24, 12, 3),
-    feeds: makeMetricSeries(24, 38, 1),
-    hits: makeMetricSeries(24, 140, 40),
-  };
+  const { data: actorsData, isLoading: actorsLoading } = useThreatActors();
+  const { data: iocsData, isLoading: iocsLoading } = useThreatIocs();
+  const { data: ransomwareData, isLoading: ransomwareLoading } = useThreatRansomware();
+  const { data: campaignData, isLoading: campaignsLoading } = useThreatCampaigns();
+  const { data: exploitsData, isLoading: exploitsLoading } = useVulnerabilities();
+  const threatActors = (actorsData?.items ?? []).map((a) => ({
+    id: a.id,
+    name: a.name,
+    alias: a.aliases.join(" / ") || a.name,
+    origin: a.origin,
+    motivation: a.motivation.join(", "),
+    ttps: a.ttps,
+    status: "active" as const,
+    lastSeen: new Date(a.lastSeen).getTime(),
+    severity: a.severity as Severity,
+  }));
+  const iocFeeds = (iocsData?.items ?? []).map((i) => ({
+    id: i.id,
+    type: i.type as "IP" | "domain" | "hash" | "email",
+    value: i.value,
+    source: "Threat Intel API",
+    confidence: Math.round(i.confidence * (i.confidence <= 1 ? 100 : 1)),
+    firstSeen: Date.now() - 7 * 86400000,
+    lastSeen: Date.now(),
+    severity: i.severity as Severity,
+  }));
+  const ransomware = ransomwareData?.items ?? RANSOMWARE;
+  const campaigns = campaignData?.items ?? CAMPAIGNS;
+  const exploits = exploitsData?.items?.slice(0, 8) ?? EXPLOITS;
 
   return (
     <div className="space-y-6 p-6">
@@ -137,11 +158,11 @@ function ThreatIntelligencePage() {
 
       {/* ── KPI Cards ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricCard label="Active IOCs" value="284k" icon={Tag} tone="info" series={kpiSeries.iocs} />
-        <MetricCard label="Tracked Actors" value={1142} icon={Skull} tone="critical" series={kpiSeries.actors} />
-        <MetricCard label="Feeds Online" value="38/40" icon={Activity} tone="healthy" series={kpiSeries.feeds} />
-        <MetricCard label="Hits / 24h" value={3219} icon={TrendingUp} tone="high" series={kpiSeries.hits} delta={{ v: "8%", up: true }} />
-        <MetricCard label="Geo Coverage" value="194" icon={Globe} tone="default" />
+        <MetricCard label="Active IOCs" value={iocsLoading ? "…" : iocFeeds.length} icon={Tag} tone="info" />
+        <MetricCard label="Tracked Actors" value={actorsLoading ? "…" : threatActors.length} icon={Skull} tone="critical" />
+        <MetricCard label="Feeds Online" value="Live" icon={Activity} tone="healthy" />
+        <MetricCard label="IOC hits" value={iocsLoading ? "…" : iocFeeds.filter((i) => i.confidence >= 90).length} icon={TrendingUp} tone="high" />
+        <MetricCard label="Geo Coverage" value={new Set(threatActors.map((a) => a.origin)).size} icon={Globe} tone="default" />
       </div>
 
       {/* ── Tabs ── */}
@@ -157,7 +178,10 @@ function ThreatIntelligencePage() {
         {/* ── Actors Tab ── */}
         <TabsContent value="actors">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {THREAT_ACTORS.map((actor) => (
+            {threatActors.length === 0 && !actorsLoading && (
+              <p className="text-sm text-muted-foreground col-span-full">No threat actors from API.</p>
+            )}
+            {threatActors.map((actor) => (
               <div
                 key={actor.id}
                 className={cn(
@@ -219,7 +243,10 @@ function ThreatIntelligencePage() {
                 </tr>
               </thead>
               <tbody>
-                {IOC_FEEDS.map((ioc) => {
+                {iocFeeds.length === 0 && !iocsLoading && (
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No IOCs from API.</td></tr>
+                )}
+                {iocFeeds.map((ioc) => {
                   const IconComp = IOC_TYPE_ICON[ioc.type] ?? Tag;
                   return (
                     <tr key={ioc.id} className="border-b border-border/50 transition-colors hover:bg-surface/30">
@@ -264,7 +291,7 @@ function ThreatIntelligencePage() {
         {/* ── Ransomware Tab ── */}
         <TabsContent value="ransomware">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {RANSOMWARE.map((rw) => (
+            {ransomware.map((rw) => (
               <div
                 key={rw.id}
                 className={cn(
@@ -320,7 +347,7 @@ function ThreatIntelligencePage() {
         {/* ── Campaigns Tab ── */}
         <TabsContent value="campaigns">
           <div className="space-y-4">
-            {CAMPAIGNS.map((camp) => (
+            {campaigns.map((camp) => (
               <div key={camp.id} className="rounded-lg border border-border bg-surface/60 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -378,7 +405,7 @@ function ThreatIntelligencePage() {
                 </tr>
               </thead>
               <tbody>
-                {EXPLOITS.map((ex) => (
+                {exploits.map((ex) => (
                   <tr key={ex.id} className="border-b border-border/50 transition-colors hover:bg-surface/30">
                     <td className="px-3 py-2.5 font-mono text-info">{ex.cve}</td>
                     <td className="px-3 py-2.5 max-w-[280px] truncate" title={ex.name}>{ex.name}</td>
@@ -392,7 +419,7 @@ function ThreatIntelligencePage() {
                         {ex.cvss.toFixed(1)}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5"><SeverityBadge severity={ex.severity} /></td>
+                    <td className="px-3 py-2.5"><SeverityBadge severity={ex.severity as Severity} /></td>
                     <td className="px-3 py-2.5">
                       {ex.weaponized ? (
                         <span className="inline-flex items-center gap-1 text-critical font-medium">

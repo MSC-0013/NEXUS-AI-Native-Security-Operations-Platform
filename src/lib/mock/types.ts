@@ -50,6 +50,14 @@ export interface Incident {
   rca: string;
   recommendations: string[];
   linkedEventIds: string[];
+  sla?: {
+    targetMinutes: number;
+    startedAt: string;
+    escalationAt: number;
+  };
+  responders?: { name: string; role: "lead" | "support" | "reviewer"; joinedAt: string }[];
+  escalations?: { from: Severity; to: Severity; reason: string; at: string; by: string }[];
+  remediations?: { id: string; title: string; assignee: string; status: "pending" | "in_progress" | "complete"; dueDate: string }[];
 }
 
 export type AlertSeverity = "critical" | "high" | "medium" | "low" | "info";

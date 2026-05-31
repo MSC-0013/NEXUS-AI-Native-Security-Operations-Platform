@@ -1,41 +1,60 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Activity, ArrowDownUp, Globe, Network, Radio, Wifi } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
+import { useNetworkFlows, useDnsQueries } from "@/lib/api-hooks";
+import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/network")({
   head: () => ({ meta: [{ title: "Network — NEXUS" }] }),
-  component: () => (
+  component: NetworkPage,
+});
+
+function NetworkPage() {
+  const { data: flowsData, isLoading: flowsLoading } = useNetworkFlows();
+  const { data: dnsData, isLoading: dnsLoading } = useDnsQueries();
+  const flows = flowsData?.items ?? [];
+  const dns = dnsData?.items ?? [];
+  const malicious = flows.filter((f) => f.isMalicious).length;
+  const dga = dns.filter((d) => d.isDga).length;
+  const blocklisted = dns.filter((d) => d.isBlocklisted).length;
+
+  return (
     <ModulePreview
       icon={Network}
       eyebrow="Detect"
       title="Network"
-      description="East-west and egress traffic analytics, DNS anomalies, and C2 detection via Zeek and Suricata sensors."
+      description="East-west and egress traffic analytics, DNS anomalies, and C2 detection."
       kpis={[
-        { label: "Throughput", value: "4.2 Gb/s", icon: ArrowDownUp, tone: "info", series: 120 },
-        { label: "Active flows", value: "1.2M", icon: Activity, tone: "default", series: 100 },
-        { label: "DNS queries / s", value: "84k", icon: Globe, tone: "info", series: 90 },
-        { label: "Anomalies / 1h", value: 218, icon: Radio, tone: "high", series: 60, delta: { v: "9%", up: true } },
-        { label: "Sensors online", value: "62/64", icon: Wifi, tone: "healthy" },
+        { label: "Active flows", value: flowsLoading ? "…" : flows.length, icon: Activity, tone: "default" },
+        { label: "Malicious flows", value: flowsLoading ? "…" : malicious, icon: ArrowDownUp, tone: "critical" },
+        { label: "DNS queries", value: dnsLoading ? "…" : dns.length, icon: Globe, tone: "info" },
+        { label: "DGA / blocklist", value: dnsLoading ? "…" : dga + blocklisted, icon: Radio, tone: "high" },
+        { label: "Sensors", value: "Live", icon: Wifi, tone: "healthy" },
       ]}
       tableTitle="Suspicious flows"
-      columns={["Source", "Destination", "Proto", "Bytes", "Verdict"]}
-      rows={[
-        { cells: ["10.4.22.18", "185.220.101.7:443 (TOR)", "TCP/TLS", "12.4 MB", "BLOCK"], severity: "critical" },
-        { cells: ["10.8.1.44", "104.21.x.x:443 (CDN)", "TCP/TLS", "812 MB", "INVESTIGATE"], severity: "high" },
-        { cells: ["10.4.22.31", "8.8.8.8:53 (DGA)", "UDP/DNS", "1.2 KB", "ALERT"], severity: "medium" },
-        { cells: ["10.12.0.9", "203.0.113.42:6667", "TCP", "44 KB", "BLOCK"], severity: "high" },
-        { cells: ["172.16.4.2", "internal-fileserver:445", "SMB", "2.1 GB", "ALERT"], severity: "medium" },
-      ]}
+      columns={["Source", "Destination", "Proto", "When", "Verdict"]}
+      rows={
+        flows.length === 0 && !flowsLoading
+          ? [{ cells: ["No flows", "—", "—", "—", "—"] }]
+          : flows.slice(0, 8).map((f) => ({
+              cells: [
+                f.sourceIp,
+                f.destinationIp,
+                f.protocol ?? "—",
+                new Date(f.flowStart).toLocaleString(),
+                f.isMalicious ? "BLOCK" : "MONITOR",
+              ],
+              severity: (f.isMalicious ? "critical" : "medium") as Severity,
+            }))
+      }
       rightPanel={{
-        title: "Top destinations",
-        items: [
-          { label: "github.com", value: "1.4 TB" },
-          { label: "*.amazonaws.com", value: "812 GB" },
-          { label: "*.cloudflare.net", value: "402 GB" },
-          { label: "Unknown ASN", value: "11 GB", tone: "high" },
-          { label: "Known C2", value: "44 MB", tone: "critical" },
-        ],
+        title: "DNS highlights",
+        items: dns.slice(0, 5).map((q) => ({
+          label: q.domain,
+          value: q.isDga ? "DGA" : q.isBlocklisted ? "Blocklist" : "OK",
+          tone: q.isDga || q.isBlocklisted ? "critical" : undefined,
+        })),
       }}
     />
-  ),
-});
+  );
+}

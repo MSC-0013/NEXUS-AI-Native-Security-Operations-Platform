@@ -5,6 +5,8 @@ import type {
   IncidentDto,
   AlertDto,
   DashboardStats,
+  ExecutiveSummary,
+  AlertRuleDto,
   SecurityEventListQuery,
   IncidentListQuery,
   AlertListQuery,
@@ -103,6 +105,96 @@ export function useDashboardStats() {
   });
 }
 
+export function useExecutiveSummary() {
+  return useQuery({
+    queryKey: ["dashboard", "executive"],
+    queryFn: () => apiFetch<ExecutiveSummary>("/v1/dashboard/executive"),
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useAlertRules() {
+  return useQuery({
+    queryKey: ["detection-rules"],
+    queryFn: () => apiFetch<{ items: AlertRuleDto[] }>("/v1/detection-rules"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentTimeline(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "timeline"],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; at: string; actor: string; action: string; detail: string }[] }>(
+        `/v1/incidents/${incidentId}/timeline`,
+      ),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentComments(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "comments"],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; content: string; author: string; createdAt?: string }[] }>(
+        `/v1/incidents/${incidentId}/comments`,
+      ),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentEvidence(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "evidence"],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; type: string; title: string; fileName?: string | null; addedAt?: string }[] }>(
+        `/v1/incidents/${incidentId}/evidence`,
+      ),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useCopilotSessions() {
+  return useQuery({
+    queryKey: ["copilot", "sessions"],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; title: string | null; messageCount: number; updatedAt: string }[] }>(
+        "/v1/copilot/sessions",
+      ),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch("/v1/notifications/read-all", { method: "PATCH" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+}
+
+export function useCreateReport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title: string; reportType: string }) =>
+      apiFetch("/v1/reports", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
+  });
+}
+
+export function useOrgUsers() {
+  return useQuery({
+    queryKey: ["users"],
+    queryFn: () =>
+      apiFetch<{ items: { id: string; email: string; fullName: string; status: string }[] }>("/v1/users"),
+    ...defaultQueryOpts,
+  });
+}
+
 export function useSearch(q: string) {
   return useQuery({
     queryKey: ["search", q],
@@ -152,6 +244,61 @@ export function useThreatIocs() {
   return useQuery({
     queryKey: ["threat-iocs"],
     queryFn: () => apiFetch<{ items: IocApi[] }>("/v1/threat-intel/iocs"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useThreatRansomware() {
+  return useQuery({
+    queryKey: ["threat-ransomware"],
+    queryFn: () => apiFetch<{ items: { id: string; name: string; encryption: string; sectors: string[]; recentVictims: string[]; severity: string; active: boolean }[] }>("/v1/threat-intel/ransomware"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useThreatCampaigns() {
+  return useQuery({
+    queryKey: ["threat-campaigns"],
+    queryFn: () => apiFetch<{ items: { id: string; name: string; actor: string; sectors: string[]; events: { at: string; desc: string }[]; severity: string }[] }>("/v1/threat-intel/campaigns"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useHuntQueries() {
+  return useQuery({
+    queryKey: ["hunt", "queries"],
+    queryFn: () => apiFetch<{ items: { id: string; name: string; description: string; query: string; frequency: string; lastRun: string; hits: number; severity: string }[] }>("/v1/hunt/queries"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useHuntAnomalies() {
+  return useQuery({
+    queryKey: ["hunt", "anomalies"],
+    queryFn: () => apiFetch<{ items: { id: string; type: string; description: string; baseline: number; observed: number; deviation: number; assets: string[]; severity: string; confidence: number }[] }>("/v1/hunt/anomalies"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useHuntResults(query?: string) {
+  return useQuery({
+    queryKey: ["hunt", "results", query],
+    queryFn: () => apiFetch<{ items: { time: string; src: string; dst: string; bytes: string; proto: string }[] }>(`/v1/hunt/results?query=${encodeURIComponent(query ?? "")}`),
+    enabled: Boolean(query),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useForensics(endpointId?: string) {
+  return useQuery({
+    queryKey: ["forensics", endpointId],
+    queryFn: () => apiFetch<{
+      fileEvents: { time: string; action: string; path: string; hash: string; size: string; severity: string }[];
+      processTree: { pid: number; name: string; ppid: number; cmdline: string; user: string; start: string; severity: string }[];
+      binaries: { name: string; hash: string; type: string; detection: string; score: number; severity: string }[];
+      artifacts: { type: string; detail: string; pid: number }[];
+    }>(`/v1/forensics/${endpointId}`),
+    enabled: Boolean(endpointId),
     ...defaultQueryOpts,
   });
 }
@@ -337,6 +484,138 @@ export function useIdentityAnomalies() {
   });
 }
 
+// ── Cloud Security Hooks ──
+export function useCloudResources(filters?: { cloud?: string; severity?: string }) {
+  const qs = filters ? new URLSearchParams(filters as Record<string, string>).toString() : "";
+  return useQuery({
+    queryKey: ["cloud", "resources", filters],
+    queryFn: () => apiFetch<{ items: CloudResourceApi[] }>(`/v1/cloud/resources${qs ? "?" + qs : ""}`),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useCloudAccounts() {
+  return useQuery({
+    queryKey: ["cloud", "accounts"],
+    queryFn: () => apiFetch<{ items: CloudAccountApi[] }>("/v1/cloud/accounts"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useCloudIamFindings() {
+  return useQuery({
+    queryKey: ["cloud", "iam-findings"],
+    queryFn: () => apiFetch<{ items: CloudIamFindingApi[] }>("/v1/cloud/iam-findings"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useCloudStorageBuckets() {
+  return useQuery({
+    queryKey: ["cloud", "storage"],
+    queryFn: () => apiFetch<{ items: CloudStorageBucketApi[] }>("/v1/cloud/storage"),
+    ...defaultQueryOpts,
+  });
+}
+
+export function useCloudCompliance() {
+  return useQuery({
+    queryKey: ["cloud", "compliance"],
+    queryFn: () => apiFetch<{ items: CloudComplianceFrameworkApi[] }>("/v1/cloud/compliance"),
+    ...defaultQueryOpts,
+  });
+}
+
+// ── Incident Advanced Features Hooks ──
+export function useIncidentSLA(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "sla"],
+    queryFn: () => apiFetch<IncidentSLAApi>(`/v1/incidents/${incidentId}/sla`),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentResponders(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "responders"],
+    queryFn: () => apiFetch<{ items: IncidentResponderApi[] }>(`/v1/incidents/${incidentId}/responders`),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentEscalations(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "escalations"],
+    queryFn: () => apiFetch<{ items: IncidentEscalationApi[] }>(`/v1/incidents/${incidentId}/escalations`),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useIncidentRemediations(incidentId: string) {
+  return useQuery({
+    queryKey: ["incident", incidentId, "remediations"],
+    queryFn: () => apiFetch<{ items: IncidentRemediationApi[] }>(`/v1/incidents/${incidentId}/remediations`),
+    enabled: !!incidentId,
+    ...defaultQueryOpts,
+  });
+}
+
+export function useAddIncidentResponder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ incidentId, responder }: { incidentId: string; responder: { userId: string; role: string } }) =>
+      apiFetch<IncidentResponderApi>(`/v1/incidents/${incidentId}/responders`, {
+        method: "POST",
+        body: JSON.stringify(responder),
+      }),
+    onSuccess: (_, { incidentId }) => {
+      qc.invalidateQueries({ queryKey: ["incident", incidentId, "responders"] });
+    },
+  });
+}
+
+// ── AI/ML Scoring Hooks ──
+export function useThreatScoring() {
+  return useQuery({
+    queryKey: ["ai", "threat-scoring"],
+    queryFn: () => apiFetch<{ items: ThreatScoringResultApi[] }>("/v1/ai/threat-scoring"),
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useAnomalyDetection(filter?: { type?: string; severity?: string }) {
+  const qs = filter ? new URLSearchParams(filter as Record<string, string>).toString() : "";
+  return useQuery({
+    queryKey: ["ai", "anomalies", filter],
+    queryFn: () => apiFetch<{ items: AnomalyDetectionResultApi[] }>(`/v1/ai/anomalies${qs ? "?" + qs : ""}`),
+    staleTime: 20_000,
+    retry: 1,
+  });
+}
+
+export function useAiRecommendations(incidentId?: string) {
+  return useQuery({
+    queryKey: ["ai", "recommendations", incidentId],
+    queryFn: () => apiFetch<{ items: AiRecommendationApi[] }>(`/v1/ai/recommendations${incidentId ? `?incidentId=${incidentId}` : ""}`),
+    enabled: !incidentId || !!incidentId,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useThreatHuntingAssistant(query: string) {
+  return useQuery({
+    queryKey: ["ai", "hunt-assist", query],
+    queryFn: () => apiFetch<{ suggestions: string[]; optimizedQuery: string }>(`/v1/ai/hunt-assist?query=${encodeURIComponent(query)}`),
+    enabled: query.length > 0,
+    staleTime: 15_000,
+  });
+}
+
 // API response types
 export interface EndpointApi {
   id: string;
@@ -382,12 +661,39 @@ export interface IocApi {
   confidence: number;
 }
 
+export interface CloudSummaryAccountApi {
+  id: string;
+  provider: string;
+  accountId: string;
+  alias: string;
+  syncStatus: string;
+  lastSyncAt: string | null;
+  totalAssets: number;
+  riskScore: number;
+  regions: string[];
+  findings: {
+    id: string;
+    type: string;
+    principal: string;
+    risk: string;
+    description: string;
+  }[];
+  assets: {
+    id: string;
+    type: string;
+    name: string;
+    region: string;
+    isPublic: boolean;
+    riskScore: number;
+  }[];
+}
+
 export interface CloudSummaryApi {
   accountCount: number;
   totalAssets: number;
   avgRisk: number;
   openFindings: number;
-  accounts: unknown[];
+  accounts: CloudSummaryAccountApi[];
 }
 
 export interface NetworkFlowApi {
@@ -513,3 +819,138 @@ export interface IdentityAnomalyApi {
   severity: string;
   description: string | null;
 }
+
+// Cloud Security Types
+export interface CloudResourceApi {
+  id: string;
+  name: string;
+  type: string;
+  cloud: string;
+  account: string;
+  region: string;
+  exposure: "public" | "internal" | "private";
+  severity: string;
+  finding: string;
+  age: string;
+  ageMs: number;
+}
+
+export interface CloudAccountApi {
+  id: string;
+  name: string;
+  provider: string;
+  resources: number;
+  riskScore: number;
+  criticalFindings: number;
+  highFindings: number;
+  compliance: { framework: string; score: number }[];
+  regions: string[];
+}
+
+export interface CloudIamFindingApi {
+  id: string;
+  type: "overprivileged" | "wildcard" | "unused_credential" | "cross_account";
+  principal: string;
+  account: string;
+  detail: string;
+  severity: string;
+  age: string;
+}
+
+export interface CloudStorageBucketApi {
+  id: string;
+  name: string;
+  cloud: string;
+  account: string;
+  publicAccess: boolean;
+  encrypted: boolean;
+  piiDetected: boolean;
+  severity: string;
+  region: string;
+}
+
+export interface CloudComplianceFrameworkApi {
+  id: string;
+  framework: string;
+  score: number;
+  status: string;
+  lastAssessment: string;
+  findings: { id: string; controlId: string; title: string; status: string }[];
+}
+
+// Incident Advanced Features Types
+export interface IncidentSLAApi {
+  id: string;
+  targetMinutes: number;
+  startedAt: string;
+  escalationAt: number;
+  breached: boolean;
+  remainingMinutes: number;
+  percentUsed: number;
+}
+
+export interface IncidentResponderApi {
+  id: string;
+  userId: string;
+  userName: string;
+  email: string;
+  role: "lead" | "support" | "reviewer";
+  joinedAt: string;
+}
+
+export interface IncidentEscalationApi {
+  id: string;
+  from: string;
+  to: string;
+  reason: string;
+  at: string;
+  by: string;
+}
+
+export interface IncidentRemediationApi {
+  id: string;
+  title: string;
+  description: string;
+  status: "pending" | "in-progress" | "complete" | "failed";
+  owner: string;
+  dueAt: string;
+  completedAt: string | null;
+  severity: string;
+}
+
+// AI/ML Types
+export interface ThreatScoringResultApi {
+  id: string;
+  entityType: string;
+  entityName: string;
+  threatScore: number;
+  severity: string;
+  riskFactors: string[];
+  confidence: number;
+  lastUpdated: string;
+}
+
+export interface AnomalyDetectionResultApi {
+  id: string;
+  type: string;
+  description: string;
+  severity: string;
+  confidence: number;
+  baseline: number;
+  observed: number;
+  deviation: number;
+  assets: string[];
+  detectedAt: string;
+}
+
+export interface AiRecommendationApi {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  priority: "high" | "medium" | "low";
+  action: string;
+  estimatedImpact: string;
+  confidenceScore: number;
+}
+

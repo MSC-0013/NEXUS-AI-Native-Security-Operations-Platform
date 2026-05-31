@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useEvents } from "@/lib/api-hooks";
 import { Terminal, Play, Save, Clock, FileText, Search, Sparkles, RotateCcw, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -34,18 +35,12 @@ const TEMPLATES = [
   { name: "Cloud Activity", description: "Monitor unauthorized cloud changes", query: "event_type:cloud (action:create OR action:delete) source!=terraform | table timestamp,resource,actor" },
 ];
 
-const MOCK_RESULTS = [
-  { timestamp: "2026-05-23T14:23:01Z", source: "EDR", severity: "critical", message: "PowerShell spawned from w3wp.exe on prod-web-01" },
-  { timestamp: "2026-05-23T14:23:42Z", source: "Firewall", severity: "high", message: "Outbound connection to 185.220.101.34:443" },
-  { timestamp: "2026-05-23T14:24:05Z", source: "IAM", severity: "high", message: "User svc-backup assumed admin role" },
-  { timestamp: "2026-05-23T14:24:18Z", source: "Network", severity: "medium", message: "2.4GB outbound transfer from prod-db-03" },
-  { timestamp: "2026-05-23T14:25:00Z", source: "Process", severity: "critical", message: "Mimikatz execution detected on prod-web-01" },
-];
-
 function QueryPage() {
   const [query, setQuery] = useState("event_type:process name:powershell | table timestamp,source,severity,message");
   const [showResults, setShowResults] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const { data: eventsData, isLoading: eventsLoading } = useEvents({ limit: 25 });
+  const results = eventsData?.items ?? [];
 
   const handleInput = (val: string) => {
     setQuery(val);
@@ -94,10 +89,18 @@ function QueryPage() {
               <div className="px-4 py-2 border-b border-border flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Results</span>
                 <div className="flex gap-3 text-[10px] font-mono text-muted-foreground">
-                  <span>5 rows</span><span>2.1M scanned</span><span>42ms</span>
+                  <span>{results.length} rows</span>
+                  {eventsLoading && <span>loading…</span>}
                 </div>
               </div>
               <div className="overflow-x-auto">
+                {eventsLoading && (
+                  <div className="px-4 py-6 text-sm text-muted-foreground text-center">Loading events…</div>
+                )}
+                {!eventsLoading && results.length === 0 && (
+                  <div className="px-4 py-6 text-sm text-muted-foreground text-center">No events returned.</div>
+                )}
+                {!eventsLoading && results.length > 0 && (
                 <table className="w-full text-xs">
                   <thead><tr className="border-b border-border">
                     <th className="px-4 py-2 text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground">timestamp</th>
@@ -106,8 +109,8 @@ function QueryPage() {
                     <th className="px-4 py-2 text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground">message</th>
                   </tr></thead>
                   <tbody>
-                    {MOCK_RESULTS.map((r, i) => (
-                      <tr key={i} className="border-b border-border/50 hover:bg-surface transition-colors">
+                    {results.map((r) => (
+                      <tr key={r.id} className="border-b border-border/50 hover:bg-surface transition-colors">
                         <td className="px-4 py-2 font-mono text-muted-foreground">{r.timestamp}</td>
                         <td className="px-4 py-2 font-mono">{r.source}</td>
                         <td className="px-4 py-2"><span className={cn("text-[9px] font-mono px-1.5 py-0.5 rounded", r.severity === "critical" ? "bg-critical/10 text-critical" : r.severity === "high" ? "bg-high/10 text-high" : "bg-medium/10 text-medium")}>{r.severity}</span></td>
@@ -116,6 +119,7 @@ function QueryPage() {
                     ))}
                   </tbody>
                 </table>
+                )}
               </div>
             </div>
           )}

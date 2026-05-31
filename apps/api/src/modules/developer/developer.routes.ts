@@ -30,4 +30,37 @@ export async function developerRoutes(app: FastifyInstance) {
     const items = await service.listWebhooks(getUser(request).orgId);
     return reply.send({ items });
   });
+
+  app.delete("/v1/developer/api-keys/:id", {
+    preHandler: authGuard(app.env, "manage:settings"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    await service.deleteApiKey(getUser(request).orgId, id);
+    return reply.send({ ok: true });
+  });
+
+  app.post("/v1/developer/webhooks", {
+    preHandler: authGuard(app.env, "manage:settings"),
+  }, async (request, reply) => {
+    const body = z.object({
+      name: z.string().min(1),
+      endpointUrl: z.string().url(),
+      subscribedEvents: z.array(z.string()).default(["alert.created"]),
+    }).parse(request.body);
+    const row = await service.createWebhook(
+      getUser(request).orgId,
+      body.name,
+      body.endpointUrl,
+      body.subscribedEvents,
+    );
+    return reply.status(201).send(row);
+  });
+
+  app.delete("/v1/developer/webhooks/:id", {
+    preHandler: authGuard(app.env, "manage:settings"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    await service.deleteWebhook(getUser(request).orgId, id);
+    return reply.send({ ok: true });
+  });
 }

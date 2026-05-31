@@ -3,6 +3,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { useCorrelationStore, type CorrelationNode, type CorrelationEdge } from "@/lib/correlation-store";
+import { useAttackGraphs } from "@/lib/api-hooks";
 import { Network, Search, ZoomIn, ZoomOut, Maximize2, Eye, Shield } from "lucide-react";
 
 export const Route = createFileRoute("/_app/security-graph")({
@@ -67,17 +68,28 @@ const REL_COLORS: Record<string, string> = {
 };
 
 function SecurityGraphPage() {
+  const { data: graphsData, isLoading } = useAttackGraphs();
+  const apiGraph = graphsData?.items?.[0];
+  const graphNodes: CorrelationNode[] =
+    apiGraph && Array.isArray(apiGraph.nodes) && apiGraph.nodes.length > 0
+      ? (apiGraph.nodes as CorrelationNode[])
+      : GRAPH_NODES;
+  const graphEdges: CorrelationEdge[] =
+    apiGraph && Array.isArray(apiGraph.edges) && apiGraph.edges.length > 0
+      ? (apiGraph.edges as CorrelationEdge[])
+      : GRAPH_EDGES;
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const getCorrelations = useCorrelationStore((s) => s.getCorrelations);
 
-  const node = selectedNode ? GRAPH_NODES.find((n) => n.id === selectedNode) : null;
+  const node = selectedNode ? graphNodes.find((n) => n.id === selectedNode) : null;
   const correlations = selectedNode ? getCorrelations(selectedNode) : null;
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary" />Security Graph</h1>
+        <h1 className="text-xl font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary" />Security Graph{apiGraph?.name ? `: ${apiGraph.name}` : ""}</h1>
+        {isLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
         <div className="flex items-center gap-2">
           <button onClick={() => setZoom((z) => Math.min(z + 0.1, 1.5))} className="p-1.5 rounded border border-border hover:bg-surface transition-colors"><ZoomIn className="h-3.5 w-3.5 text-muted-foreground" /></button>
           <span className="text-[9px] font-mono text-muted-foreground w-8 text-center">{(zoom * 100).toFixed(0)}%</span>
@@ -94,7 +106,7 @@ function SecurityGraphPage() {
               <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" className="fill-muted-foreground" /></marker>
             </defs>
 
-            {GRAPH_EDGES.map((e, i) => {
+            {graphEdges.map((e, i) => {
               const from = POSITIONS[e.source];
               const to = POSITIONS[e.target];
               if (!from || !to) return null;
@@ -106,7 +118,7 @@ function SecurityGraphPage() {
               );
             })}
 
-            {GRAPH_NODES.map((n) => {
+            {graphNodes.map((n) => {
               const pos = POSITIONS[n.id];
               if (!pos) return null;
               const style = TYPE_STYLES[n.type] ?? TYPE_STYLES.alert;
@@ -154,7 +166,7 @@ function SecurityGraphPage() {
               <div className="rounded-lg border border-border bg-surface/60 p-4">
                 <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Relationships</div>
                 <div className="space-y-1">
-                  {GRAPH_EDGES.filter((e) => e.source === node.id || e.target === node.id).map((e, i) => (
+                  {graphEdges.filter((e) => e.source === node.id || e.target === node.id).map((e, i) => (
                     <div key={i} className="text-[10px] font-mono flex items-center gap-1.5">
                       <span className="text-muted-foreground">{e.source === node.id ? "→" : "←"}</span>
                       <span style={{ color: REL_COLORS[e.relationship] }}>{e.relationship}</span>

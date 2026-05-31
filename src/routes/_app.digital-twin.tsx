@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { usePlatformHealth } from "@/lib/api-hooks";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Server, Activity, Shield, TriangleAlert as AlertTriangle, Eye, Layers, Wifi } from "lucide-react";
 
@@ -40,6 +40,11 @@ const OVERLAYS = ["health", "security", "traffic", "none"] as const;
 function DigitalTwinPage() {
   const [overlay, setOverlay] = useState<typeof OVERLAYS[number]>("health");
   const [selected, setSelected] = useState<string | null>(null);
+  const { data: health } = usePlatformHealth();
+  const services = health?.services ?? [];
+  const healthy = services.filter((s) => s.status === "healthy").length;
+  const degraded = services.filter((s) => s.status === "degraded").length;
+  const critical = services.filter((s) => s.status === "critical" || s.status === "down").length;
 
   const selectedNode = NODES.find((n) => n.id === selected);
 
@@ -57,10 +62,10 @@ function DigitalTwinPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Services" value="9" icon={Server} tone="default" series={makeMetricSeries(9, 40)} />
-        <MetricCard label="Healthy" value="6" icon={Activity} tone="healthy" series={makeMetricSeries(6, 40)} />
-        <MetricCard label="Degraded" value="2" icon={AlertTriangle} tone="high" series={makeMetricSeries(2, 40)} />
-        <MetricCard label="Critical" value="1" icon={Shield} tone="critical" series={makeMetricSeries(1, 40)} />
+        <MetricCard label="Services" value={String(services.length)} icon={Server} tone="default" />
+        <MetricCard label="Healthy" value={String(healthy)} icon={Activity} tone="healthy" />
+        <MetricCard label="Degraded" value={String(degraded)} icon={AlertTriangle} tone="high" />
+        <MetricCard label="Critical" value={String(critical)} icon={Shield} tone="critical" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">

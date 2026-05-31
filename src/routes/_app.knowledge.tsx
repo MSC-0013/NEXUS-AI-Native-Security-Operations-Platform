@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { BookOpen, Search, Tag, Bookmark, FileText, Shield, TriangleAlert as AlertTriangle, Plus, Clock, User, ChevronRight, Skull, Crosshair, ListChecks, FlaskConical, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import { useKnowledge } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/knowledge")({
   head: () => ({
@@ -116,20 +117,38 @@ const ARTICLES: Article[] = [
 /* ── component ── */
 
 function KnowledgePage() {
-  const [selectedCat, setSelectedCat] = useState<string | null>(null);
-  const [selectedArticleId, setSelectedArticleId] = useState<string>("kb-001");
   const [query, setQuery] = useState("");
+  const { data: knowledgeData, isLoading } = useKnowledge(query || undefined);
+  const articles: Article[] = useMemo(
+    () =>
+      (knowledgeData?.items ?? []).map((a) => ({
+        id: a.id,
+        title: a.title,
+        categoryId: a.category.toLowerCase().replace(/\s+/g, "-") || "runbooks",
+        updatedAt: a.updatedAt,
+        author: "NEXUS",
+        tags: a.tags,
+        bookmarked: false,
+        excerpt: a.excerpt,
+        content: a.excerpt,
+      })),
+    [knowledgeData],
+  );
+  const displayArticles = articles.length > 0 ? articles : ARTICLES;
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [showBookmarked, setShowBookmarked] = useState(false);
+  const effectiveArticleId = selectedArticleId ?? displayArticles[0]?.id ?? "";
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
-    ARTICLES.forEach((a) => a.tags.forEach((t) => set.add(t)));
+    displayArticles.forEach((a) => a.tags.forEach((t) => set.add(t)));
     return Array.from(set).sort();
-  }, []);
+  }, [displayArticles]);
 
   const filtered = useMemo(() => {
-    return ARTICLES.filter((a) => {
+    return displayArticles.filter((a) => {
       if (selectedCat && a.categoryId !== selectedCat) return false;
       if (showBookmarked && !a.bookmarked) return false;
       if (activeTag && !a.tags.includes(activeTag)) return false;
@@ -139,9 +158,9 @@ function KnowledgePage() {
       }
       return true;
     });
-  }, [selectedCat, showBookmarked, activeTag, query]);
+  }, [selectedCat, showBookmarked, activeTag, query, displayArticles]);
 
-  const selectedArticle = ARTICLES.find((a) => a.id === selectedArticleId) ?? ARTICLES[0];
+  const selectedArticle = displayArticles.find((a) => a.id === effectiveArticleId) ?? displayArticles[0];
   const catLabel = (id: string) => CATEGORIES.find((c) => c.id === id)?.label ?? id;
 
   return (
@@ -164,7 +183,7 @@ function KnowledgePage() {
             >
               <BookOpen className="size-4" />
               <span className="flex-1">All categories</span>
-              <span className="text-[10px] font-mono text-muted-foreground">{ARTICLES.length}</span>
+              <span className="text-[10px] font-mono text-muted-foreground">{isLoading ? "…" : displayArticles.length}</span>
             </button>
             {CATEGORIES.map((cat) => {
               const Icon = cat.icon;

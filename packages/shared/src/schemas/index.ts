@@ -78,6 +78,38 @@ export const IncidentListQuerySchema = z.object({
 });
 export type IncidentListQuery = z.infer<typeof IncidentListQuerySchema>;
 
+export const IncidentResponderSchema = z.object({
+  name: z.string(),
+  role: z.enum(["lead", "support", "reviewer"]),
+  joinedAt: z.string(),
+});
+export type IncidentResponder = z.infer<typeof IncidentResponderSchema>;
+
+export const IncidentSlaSchema = z.object({
+  targetMinutes: z.number().int(),
+  startedAt: z.string(),
+  escalationAt: z.number().int(),
+});
+export type IncidentSla = z.infer<typeof IncidentSlaSchema>;
+
+export const IncidentEscalationSchema = z.object({
+  from: SeverityLevelSchema,
+  to: SeverityLevelSchema,
+  reason: z.string(),
+  at: z.string(),
+  by: z.string(),
+});
+export type IncidentEscalation = z.infer<typeof IncidentEscalationSchema>;
+
+export const IncidentRemediationSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  assignee: z.string(),
+  status: z.enum(["pending", "in_progress", "complete"]),
+  dueDate: z.string(),
+});
+export type IncidentRemediation = z.infer<typeof IncidentRemediationSchema>;
+
 export const IncidentDtoSchema = z.object({
   id: z.string().uuid(),
   code: z.string(),
@@ -95,6 +127,10 @@ export const IncidentDtoSchema = z.object({
   rca: z.string().nullable(),
   recommendations: z.array(z.string()),
   linkedEventIds: z.array(z.string()),
+  sla: IncidentSlaSchema.optional(),
+  responders: z.array(IncidentResponderSchema).optional(),
+  escalations: z.array(IncidentEscalationSchema).optional(),
+  remediations: z.array(IncidentRemediationSchema).optional(),
   timeline: z.array(z.object({
     at: z.string(),
     actor: z.string(),
@@ -169,6 +205,45 @@ export const DashboardStatsSchema = z.object({
   })),
 });
 export type DashboardStats = z.infer<typeof DashboardStatsSchema>;
+
+export const ExecutiveSummarySchema = z.object({
+  riskPosture: z.number(),
+  openIncidents: z.number(),
+  slaCompliancePct: z.number(),
+  meanTimeToDetectMs: z.number(),
+  riskBySeverity: z.array(z.object({ label: z.string(), value: z.number(), max: z.number() })),
+  compliance: z.array(z.object({ framework: z.string(), score: z.number(), trend: z.string() })),
+  financial: z.array(z.object({ metric: z.string(), value: z.string(), trend: z.string() })),
+  sla: z.array(z.object({
+    metric: z.string(),
+    target: z.string(),
+    actual: z.string(),
+    met: z.boolean(),
+  })),
+  attackTrends: z.array(z.object({
+    type: z.string(),
+    count: z.number(),
+    change: z.string(),
+    severity: z.string(),
+  })),
+});
+export type ExecutiveSummary = z.infer<typeof ExecutiveSummarySchema>;
+
+export const AlertRuleSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  query: z.string(),
+  severity: z.string(),
+  dataSources: z.array(z.string()),
+  isEnabled: z.boolean(),
+  matches24h: z.number(),
+  lastMatchAt: z.string().nullable(),
+  status: z.enum(["active", "testing", "disabled"]),
+  logSource: z.string().optional(),
+  code: z.string().optional(),
+});
+export type AlertRuleDto = z.infer<typeof AlertRuleSchema>;
 
 export const ApiErrorSchema = z.object({
   error: z.string(),

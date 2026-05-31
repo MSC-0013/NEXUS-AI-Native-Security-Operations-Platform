@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Key, Code, Globe, Zap, Copy, Shield, Check, Trash2, Plus, Eye, EyeOff, Activity, Clock, TriangleAlert as AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
 import { Switch } from "@/components/ui/switch";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useApiKeys, useWebhooks } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/developer")({
   head: () => ({
@@ -20,23 +20,10 @@ export const Route = createFileRoute("/_app/developer")({
 /*  Mock data                                                          */
 /* ------------------------------------------------------------------ */
 
-const API_KEYS = [
-  { id: "1", name: "Production API", prefix: "sk_nex_a3f8", permissions: ["read", "write", "admin"], created: "2026-03-12", lastUsed: "2 min ago", status: "active" as const },
-  { id: "2", name: "Staging Ingest", prefix: "sk_nex_b7d2", permissions: ["read", "write"], created: "2026-04-01", lastUsed: "1 hr ago", status: "active" as const },
-  { id: "3", name: "CI/CD Pipeline", prefix: "sk_nex_c9e1", permissions: ["read"], created: "2026-01-18", lastUsed: "5 days ago", status: "active" as const },
-  { id: "4", name: "Legacy Integration", prefix: "sk_nex_d4a6", permissions: ["read"], created: "2025-11-05", lastUsed: "42 days ago", status: "revoked" as const },
-];
-
 const INGESTION_TOKENS = [
   { id: "t1", name: "Fluentd Forwarder", prefix: "ing_****_x8k2", scope: "logs", created: "2026-04-10", lastPush: "12s ago", status: "active" as const },
   { id: "t2", name: "Syslog Relay", prefix: "ing_****_m3p7", scope: "events", created: "2026-02-28", lastPush: "4m ago", status: "active" as const },
   { id: "t3", name: "OTEL Collector", prefix: "ing_****_q1n9", scope: "traces", created: "2026-05-02", lastPush: "8m ago", status: "active" as const },
-];
-
-const WEBHOOKS = [
-  { id: "w1", url: "https://api.acme.io/hooks/nexus", events: ["incident.created", "incident.escalated"], status: true, lastDelivery: "3s ago", successRate: 99.8 },
-  { id: "w2", url: "https://slack.acme.io/webhook/nexus-alerts", events: ["alert.critical", "alert.high"], status: true, lastDelivery: "1m ago", successRate: 100 },
-  { id: "w3", url: "https://pagerduty.acme.io/events", events: ["incident.created"], status: false, lastDelivery: "7d ago", successRate: 87.3 },
 ];
 
 const SDK_EXAMPLES: Record<string, { label: string; code: string }> = {
@@ -118,18 +105,33 @@ const PERMISSION_SCOPES = [
 /* ------------------------------------------------------------------ */
 
 function DeveloperPage() {
+  const { data: keysData, isLoading: keysLoading } = useApiKeys();
+  const { data: webhooksData, isLoading: webhooksLoading } = useWebhooks();
+  const apiKeys = (keysData?.items ?? []).map((k) => ({
+    id: k.id,
+    name: k.name,
+    prefix: k.keyPrefix,
+    permissions: Array.isArray(k.scopes) ? (k.scopes as string[]) : ["read"],
+    created: "—",
+    lastUsed: "—",
+    status: (k.isActive ? "active" : "revoked") as const,
+  }));
+  const webhooks = (webhooksData?.items ?? []).map((w) => ({
+    id: w.id,
+    url: w.endpointUrl,
+    events: ["incident.created"],
+    status: w.isActive,
+    lastDelivery: "—",
+    successRate: w.isActive ? 100 : 0,
+  }));
   const [activeTab, setActiveTab] = useState<"python" | "javascript" | "go">("python");
   const [copied, setCopied] = useState(false);
-  const [webhookStatuses, setWebhookStatuses] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(WEBHOOKS.map((w) => [w.id, w.status])),
-  );
+  const [webhookStatuses, setWebhookStatuses] = useState<Record<string, boolean>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
 
-  const metricSeries = useMemo(() => ({
-    requests: makeMetricSeries(36, 4200, 600),
-    errors: makeMetricSeries(36, 12, 5),
-    latency: makeMetricSeries(36, 84, 15),
-  }), []);
+  useEffect(() => {
+    setWebhookStatuses(Object.fromEntries(webhooks.map((w) => [w.id, w.status])));
+  }, [webhooksData?.items]);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -150,9 +152,9 @@ function DeveloperPage() {
       <section>
         <SectionHeader icon={Activity} title="API Usage Analytics" />
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <MetricCard label="Requests / 24h" value="4,218" delta={{ v: "8%", up: true }} icon={Zap} tone="info" series={metricSeries.requests} />
-          <MetricCard label="Error Rate" value="0.28%" delta={{ v: "0.05%", up: false }} icon={AlertTriangle} tone="healthy" series={metricSeries.errors} />
-          <MetricCard label="Avg Latency" value="84 ms" delta={{ v: "3 ms", up: false }} icon={Clock} tone="default" series={metricSeries.latency} />
+          <MetricCard label="API Keys" value={keysLoading ? "…" : apiKeys.length} icon={Zap} tone="info" />
+          <MetricCard label="Active Keys" value={keysLoading ? "…" : apiKeys.filter((k) => k.status === "active").length} icon={AlertTriangle} tone="healthy" />
+          <MetricCard label="Webhooks" value={webhooksLoading ? "…" : webhooks.length} icon={Clock} tone="default" />
         </div>
       </section>
 
@@ -177,7 +179,10 @@ function DeveloperPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {API_KEYS.map((key) => (
+              {apiKeys.length === 0 && !keysLoading && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No API keys.</td></tr>
+              )}
+              {apiKeys.map((key) => (
                 <tr key={key.id} className={cn("hover:bg-accent/40", key.status === "revoked" && "opacity-50")}>
                   <td className="px-4 py-3 font-medium">{key.name}</td>
                   <td className="px-4 py-3">
@@ -311,7 +316,10 @@ function DeveloperPage() {
               <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Active Webhooks</div>
             </div>
             <div className="divide-y divide-border">
-              {WEBHOOKS.map((wh) => (
+              {webhooks.length === 0 && !webhooksLoading && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No webhooks.</td></tr>
+              )}
+              {webhooks.map((wh) => (
                 <div key={wh.id} className="px-4 py-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-xs text-muted-foreground truncate max-w-[280px]">{wh.url}</span>

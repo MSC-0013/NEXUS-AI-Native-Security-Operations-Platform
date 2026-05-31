@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
 import { WorkspaceContext } from "@/components/workspace-context";
-import { makeMetricSeries } from "@/lib/mock/generators";
 import { Progress } from "@/components/ui/progress";
 import { useWorkspaceStore } from "@/lib/workspace-store";
+import { useDashboardStats, useOrgUsers, useCopilotSessions } from "@/lib/api-hooks";
 import { CreditCard, Users, Database, Bot, TrendingUp } from "lucide-react";
 
 export const Route = createFileRoute("/_app/billing")({
@@ -44,8 +44,14 @@ const INGESTION = [
 
 function BillingPage() {
   const active = useWorkspaceStore((s) => s.getActiveWorkspace());
-  const seatsUsed = Math.min(100, Math.round(active.stats.endpoints / 60));
-  const eventsB = ((active.stats.endpoints * 750_000) / 1_000_000_000).toFixed(1);
+  const { data: stats } = useDashboardStats();
+  const { data: usersData } = useOrgUsers();
+  const { data: copilotData } = useCopilotSessions();
+  const seatsUsed = usersData?.items?.length ?? Math.min(100, Math.round(active.stats.endpoints / 60));
+  const eventsB = stats?.blockedAttacks24h
+    ? (stats.blockedAttacks24h / 1_000_000).toFixed(1)
+    : ((active.stats.endpoints * 750_000) / 1_000_000_000).toFixed(1);
+  const aiQueries = copilotData?.items?.reduce((n, s) => n + (s.messageCount ?? 0), 0) ?? 0;
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -61,10 +67,10 @@ function BillingPage() {
       <WorkspaceContext />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Monthly Spend" value="$4,200" icon={CreditCard} tone="default" series={makeMetricSeries(40, 4200, 200)} />
-        <MetricCard label="Seats Used" value={`${seatsUsed}/100`} icon={Users} tone="info" series={makeMetricSeries(40, seatsUsed, 4)} />
-        <MetricCard label="Events/Mo" value={`${eventsB}B`} icon={Database} tone="healthy" series={makeMetricSeries(40, 2100, 80)} />
-        <MetricCard label="AI Queries" value="1.2K" icon={Bot} tone="default" series={makeMetricSeries(40, 1200, 60)} />
+        <MetricCard label="Monthly Spend" value="$4,200" icon={CreditCard} tone="default" />
+        <MetricCard label="Seats Used" value={`${seatsUsed}/100`} icon={Users} tone="info" />
+        <MetricCard label="Events/Mo" value={`${eventsB}B`} icon={Database} tone="healthy" />
+        <MetricCard label="AI Queries" value={aiQueries >= 1000 ? `${(aiQueries / 1000).toFixed(1)}K` : String(aiQueries)} icon={Bot} tone="default" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

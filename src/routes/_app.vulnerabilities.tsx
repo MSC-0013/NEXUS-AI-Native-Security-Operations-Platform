@@ -1,42 +1,56 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Bug, Package, Shield, ShieldAlert, Wrench, Zap } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
+import { useVulnerabilities } from "@/lib/api-hooks";
+import type { Severity } from "@/lib/mock/types";
 
 export const Route = createFileRoute("/_app/vulnerabilities")({
   head: () => ({ meta: [{ title: "Vulnerabilities — NEXUS" }] }),
-  component: () => (
+  component: VulnerabilitiesPage,
+});
+
+function VulnerabilitiesPage() {
+  const { data, isLoading } = useVulnerabilities();
+  const items = data?.items ?? [];
+  const critical = items.filter((v) => v.severity === "critical").length;
+  const high = items.filter((v) => v.severity === "high").length;
+  const exploited = items.filter((v) => v.exploitStatus !== "none" && v.exploitStatus !== "unknown").length;
+
+  const sev = (s: string): Severity =>
+    s === "critical" ? "critical" : s === "high" ? "high" : s === "medium" ? "medium" : "info";
+
+  return (
     <ModulePreview
       icon={Shield}
       eyebrow="Detect"
       title="Vulnerabilities"
-      description="Prioritized vulnerability management with EPSS scoring, exploit intelligence, and reachable-from-internet context."
+      description="Prioritized vulnerability management with EPSS scoring and exploit intelligence."
       kpis={[
-        { label: "Open CVEs", value: "14,228", icon: Bug, tone: "high", series: 200 },
-        { label: "Critical + exploited", value: 47, icon: Zap, tone: "critical", series: 30 },
-        { label: "Packages scanned", value: "92k", icon: Package, tone: "info" },
-        { label: "Patched (30d)", value: "3,812", icon: Wrench, tone: "healthy", series: 80 },
-        { label: "Avg. MTTR", value: "11d", icon: ShieldAlert, tone: "default" },
+        { label: "Open CVEs", value: isLoading ? "…" : items.length, icon: Bug, tone: "high" },
+        { label: "Critical", value: isLoading ? "…" : critical, icon: Zap, tone: "critical" },
+        { label: "High", value: isLoading ? "…" : high, icon: ShieldAlert, tone: "high" },
+        { label: "Known exploited", value: isLoading ? "…" : exploited, icon: Wrench, tone: "critical" },
+        { label: "Assets (sum)", value: isLoading ? "…" : items.reduce((s, v) => s + v.assetCount, 0), icon: Package, tone: "info" },
       ]}
-      tableTitle="Top exploitable vulnerabilities"
-      columns={["CVE", "Package", "CVSS", "EPSS", "Assets"]}
-      rows={[
-        { cells: ["CVE-2024-3094 (xz-utils backdoor)", "liblzma 5.6.0", "10.0", "0.94", 22], severity: "critical" },
-        { cells: ["CVE-2024-21762 (FortiOS SSL-VPN)", "fortios", "9.8", "0.91", 4], severity: "critical" },
-        { cells: ["CVE-2023-44487 (HTTP/2 Rapid Reset)", "nginx 1.25.2", "7.5", "0.88", 312], severity: "high" },
-        { cells: ["CVE-2024-1086 (Linux nf_tables)", "kernel 5.15", "7.8", "0.72", 1840], severity: "high" },
-        { cells: ["CVE-2023-50164 (Struts2 path traversal)", "struts 2.5.32", "9.8", "0.81", 6], severity: "critical" },
-        { cells: ["CVE-2024-27198 (TeamCity auth bypass)", "teamcity 2023.11", "9.8", "0.86", 2], severity: "critical" },
-      ]}
+      tableTitle="Top vulnerabilities"
+      columns={["CVE", "CVSS", "EPSS", "Patch", "Assets"]}
+      rows={
+        items.length === 0 && !isLoading
+          ? [{ cells: ["No vulnerabilities", "—", "—", "—", "—"] }]
+          : items.slice(0, 8).map((v) => ({
+              cells: [v.cve, v.cvss.toFixed(1), v.epss.toFixed(2), v.patchStatus, v.assetCount],
+              severity: sev(v.severity),
+            }))
+      }
       rightPanel={{
         title: "Risk distribution",
         items: [
-          { label: "Critical", value: "412", tone: "critical" },
-          { label: "High", value: "2,108", tone: "high" },
-          { label: "Medium", value: "6,902" },
-          { label: "Low", value: "4,806", tone: "info" },
-          { label: "Internet-reachable", value: "189", tone: "critical" },
+          { label: "Critical", value: String(critical), tone: "critical" },
+          { label: "High", value: String(high), tone: "high" },
+          { label: "Medium", value: String(items.filter((v) => v.severity === "medium").length) },
+          { label: "Low", value: String(items.filter((v) => v.severity === "low" || v.severity === "info").length), tone: "info" },
         ],
       }}
     />
-  ),
-});
+  );
+}

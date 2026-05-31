@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { makeMetricSeries } from "@/lib/mock/generators";
+import { useRunbooks } from "@/lib/api-hooks";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { formatDistanceToNow } from "date-fns";
@@ -24,14 +24,6 @@ interface Policy {
   lastTriggered?: Date;
   violations?: number;
 }
-
-const DETECTION_POLICIES: Policy[] = [
-  { id: "dp-1", name: "Cobalt Strike Detection", description: "Detect CS beacon patterns in network traffic and process execution", enabled: true, severity: "critical", lastTriggered: new Date(Date.now() - 180000), violations: 3 },
-  { id: "dp-2", name: "Lateral Movement Detection", description: "SMB/WMI/PSExec from non-standard sources", enabled: true, severity: "high", lastTriggered: new Date(Date.now() - 2400000), violations: 7 },
-  { id: "dp-3", name: "Data Exfiltration Detection", description: "Large outbound transfers exceeding baseline thresholds", enabled: true, severity: "high", lastTriggered: new Date(Date.now() - 7200000), violations: 2 },
-  { id: "dp-4", name: "Ransomware Precursor Detection", description: "VSS delete, bcdedit, wbadmin disable patterns", enabled: true, severity: "critical", violations: 0 },
-  { id: "dp-5", name: "Insider Threat Detection", description: "After-hours access, bulk downloads, USB insertion", enabled: false, severity: "high", lastTriggered: new Date(Date.now() - 86400000), violations: 5 },
-];
 
 const ALERT_POLICIES: Policy[] = [
   { id: "ap-1", name: "P1 Critical Escalation", description: "Auto-escalate critical alerts to SOC lead within 5 minutes", enabled: true, severity: "critical", lastTriggered: new Date(Date.now() - 300000), violations: 1 },
@@ -74,7 +66,7 @@ const VIOLATIONS = [
 ];
 
 const TAB_CONFIG = [
-  { key: "detection", label: "Detection", icon: Shield, policies: DETECTION_POLICIES },
+  { key: "detection", label: "Detection", icon: Shield },
   { key: "alert", label: "Alert", icon: Bell, policies: ALERT_POLICIES },
   { key: "iam", label: "IAM", icon: Key, policies: IAM_POLICIES },
   { key: "endpoint", label: "Endpoint", icon: Laptop, policies: ENDPOINT_POLICIES },
@@ -110,14 +102,31 @@ function PolicyRow({ policy, onToggle }: { policy: Policy; onToggle: (id: string
 }
 
 function PoliciesPage() {
+  const { data: runbooksData } = useRunbooks();
+  const detectionPolicies = useMemo<Policy[]>(
+    () =>
+      (runbooksData?.items ?? []).map((rb) => ({
+        id: rb.id,
+        name: rb.name,
+        description: rb.description ?? "Detection runbook",
+        enabled: rb.isAutomated,
+        severity: "high" as const,
+        violations: 0,
+      })),
+    [runbooksData],
+  );
   const [policies, setPolicies] = useState<Record<string, Policy[]>>({
-    detection: DETECTION_POLICIES,
+    detection: [],
     alert: ALERT_POLICIES,
     iam: IAM_POLICIES,
     endpoint: ENDPOINT_POLICIES,
     retention: RETENTION_POLICIES,
     ai: AI_POLICIES,
   });
+  const mergedPolicies = useMemo(
+    () => ({ ...policies, detection: detectionPolicies.length ? detectionPolicies : policies.detection }),
+    [policies, detectionPolicies],
+  );
 
   const togglePolicy = (tab: string, id: string) => {
     setPolicies((prev) => ({
@@ -126,8 +135,8 @@ function PoliciesPage() {
     }));
   };
 
-  const totalActive = Object.values(policies).flat().filter((p) => p.enabled).length;
-  const totalViolations = Object.values(policies).flat().reduce((s, p) => s + (p.violations ?? 0), 0);
+  const totalActive = Object.values(mergedPolicies).flat().filter((p) => p.enabled).length;
+  const totalViolations = Object.values(mergedPolicies).flat().reduce((s, p) => s + (p.violations ?? 0), 0);
 
   return (
     <div className="p-6 space-y-6">
@@ -137,10 +146,10 @@ function PoliciesPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Active Policies" value={String(totalActive)} icon={Shield} tone="default" series={makeMetricSeries(totalActive, 40)} />
-        <MetricCard label="Violations/24h" value={String(totalViolations)} icon={AlertTriangle} tone="high" series={makeMetricSeries(totalViolations, 40)} />
-        <MetricCard label="Coverage" value="94%" icon={CheckCircle2} tone="healthy" series={makeMetricSeries(94, 40)} />
-        <MetricCard label="Avg Response" value="4.2m" icon={Clock} tone="info" series={makeMetricSeries(42, 40)} />
+        <MetricCard label="Active Policies" value={String(totalActive)} icon={Shield} tone="default" />
+        <MetricCard label="Violations/24h" value={String(totalViolations)} icon={AlertTriangle} tone="high" />
+        <MetricCard label="Runbooks" value={String(detectionPolicies.length)} icon={CheckCircle2} tone="healthy" />
+        <MetricCard label="Tabs" value={String(TAB_CONFIG.length)} icon={Clock} tone="info" />
       </div>
 
       <Tabs defaultValue="detection">
@@ -156,7 +165,7 @@ function PoliciesPage() {
         {TAB_CONFIG.map((tab) => (
           <TabsContent key={tab.key} value={tab.key}>
             <div className="rounded-lg border border-border bg-surface/60 mt-4 divide-y divide-border">
-              {policies[tab.key].map((p) => (
+              {(mergedPolicies[tab.key] ?? tab.policies ?? []).map((p) => (
                 <PolicyRow key={p.id} policy={p} onToggle={(id) => togglePolicy(tab.key, id)} />
               ))}
             </div>

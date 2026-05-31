@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { createHash, randomBytes } from "crypto";
 import type { DbClient } from "@nexus/db";
 import { apiKeys, webhooks } from "@nexus/db/schema";
@@ -75,6 +75,36 @@ export class DeveloperService {
         .where(eq(webhooks.organizationId, orgId));
 
       return rows;
+    });
+  }
+
+  async deleteApiKey(orgId: string, id: string) {
+    return withTenant(this.client, orgId, async () => {
+      await this.db
+        .delete(apiKeys)
+        .where(and(eq(apiKeys.id, id), eq(apiKeys.organizationId, orgId)));
+    });
+  }
+
+  async createWebhook(orgId: string, name: string, endpointUrl: string, events: string[]) {
+    const secret = randomBytes(16).toString("hex");
+    const [row] = await withTenant(this.client, orgId, async () =>
+      this.db.insert(webhooks).values({
+        organizationId: orgId,
+        name,
+        endpointUrl,
+        secretKey: secret,
+        subscribedEvents: events,
+      }).returning(),
+    );
+    return row;
+  }
+
+  async deleteWebhook(orgId: string, id: string) {
+    return withTenant(this.client, orgId, async () => {
+      await this.db
+        .delete(webhooks)
+        .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, orgId)));
     });
   }
 }

@@ -8,6 +8,7 @@ import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
 import { Switch } from "@/components/ui/switch";
+import { useAttackGraphs } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/attack-graph")({
   head: () => ({ meta: [{ title: "Attack Graph — NEXUS" }] }),
@@ -116,6 +117,9 @@ function computeBlastRadius(sourceId: string): Set<string> {
 /*  Page component                                                     */
 /* ------------------------------------------------------------------ */
 function AttackGraphPage() {
+  const { data: graphsData, isLoading } = useAttackGraphs();
+  const graphCount = graphsData?.items?.length ?? 0;
+  const primaryGraph = graphsData?.items?.[0];
   const [zoom, setZoom] = useState(1);
   const [active, setActive] = useState<number | null>(0);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
@@ -181,7 +185,12 @@ function AttackGraphPage() {
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Attack Graph</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Attack Graph{primaryGraph?.name ? `: ${primaryGraph.name}` : ""}
+            </h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              {isLoading ? "Loading graphs…" : `${graphCount} graph(s) from API`}
+            </p>
             <p className="text-sm text-muted-foreground max-w-3xl mt-1">
               Interactive blast-radius graph mapping identities, assets, and vulnerabilities into exploitable attack paths. Click a node to trace blast radius, hover for exposure detail.
             </p>
