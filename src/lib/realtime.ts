@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { makeEvent } from "./mock/generators";
-import type { SecurityEvent } from "./mock/types";
+import { create } from "zustand";
+import type { SecurityEventDto } from "@nexus/shared";
 import { getWsUrl } from "./api-client";
 import { useAuth } from "./auth-store";
 
 type ConnectionState = "connected" | "reconnecting" | "disconnected";
 
+// Shared store so useLiveEvents can write WS state and useConnectionState can read it
+interface WsStore {
+  state: ConnectionState;
+  setState: (s: ConnectionState) => void;
+}
+const useWsStore = create<WsStore>((set) => ({
+  state: "disconnected",
+  setState: (s) => set({ state: s }),
+}));
+
 export function useConnectionState(): ConnectionState {
-  const user = useAuth((s) => s.user);
-  const [state, setState] = useState<ConnectionState>(user ? "connected" : "disconnected");
-
-  useEffect(() => {
-    if (!user) {
-      setState("disconnected");
-      return;
-    }
-    setState("connected");
-  }, [user]);
-
-  return state;
+  return useWsStore((s) => s.state);
 }
 
 export interface StreamStats {
@@ -49,14 +48,14 @@ export function useStreamStats(): StreamStats {
   return stats;
 }
 
-type LiveEventStatus = "live" | "paused" | "buffering" | "mock" | "reconnecting";
+type LiveEventStatus = "live" | "paused" | "buffering" | "reconnecting";
 
-function mapApiEvent(e: Record<string, unknown>): SecurityEvent {
+function mapApiEvent(e: Record<string, unknown>): SecurityEventDto {
   return {
     id: String(e.id),
     timestamp: String(e.timestamp),
-    type: e.type as SecurityEvent["type"],
-    severity: e.severity as SecurityEvent["severity"],
+    type: e.type as SecurityEventDto["type"],
+    severity: e.severity as SecurityEventDto["severity"],
     source: String(e.source),
     sourceIp: String(e.sourceIp ?? ""),
     destIp: String(e.destIp ?? ""),
@@ -71,36 +70,26 @@ function mapApiEvent(e: Record<string, unknown>): SecurityEvent {
   };
 }
 
-/** Live event stream — WebSocket when authenticated, mock fallback otherwise. */
+/** Live event stream — WebSocket when authenticated. */
 export function useLiveEvents(max = 50, intervalMs = 1500) {
   const user = useAuth((s) => s.user);
-  const [events, setEvents] = useState<SecurityEvent[]>([]);
-  const [status, setStatus] = useState<LiveEventStatus>("mock");
+  const [events, setEvents] = useState<SecurityEventDto[]>([]);
+  const [status, setStatus] = useState<LiveEventStatus>("reconnecting");
   const wsRef = useRef<WebSocket | null>(null);
-  const mockRef = useRef<number | null>(null);
 
-  const addEvent = useCallback((event: SecurityEvent) => {
+  const addEvent = useCallback((event: SecurityEventDto) => {
     setEvents((prev) => [event, ...prev].slice(0, max));
   }, [max]);
 
   useEffect(() => {
-    if (mockRef.current) {
-      window.clearInterval(mockRef.current);
-      mockRef.current = null;
-    }
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
 
     if (!user) {
-      setStatus("mock");
-      const tick = () => addEvent(makeEvent(new Date()));
-      tick();
-      mockRef.current = window.setInterval(tick, intervalMs + Math.random() * 800);
-      return () => {
-        if (mockRef.current) window.clearInterval(mockRef.current);
-      };
+      setStatus("reconnecting");
+      return;
     }
 
     setStatus("live");
@@ -122,21 +111,23 @@ export function useLiveEvents(max = 50, intervalMs = 1500) {
       ws.onerror = () => setStatus("buffering");
       ws.onclose = () => {
         setStatus("reconnecting");
-        setTimeout(() => setStatus("mock"), 2000);
       };
     } catch {
-      setStatus("mock");
-      mockRef.current = window.setInterval(
-        () => addEvent(makeEvent(new Date())),
-        intervalMs,
-      );
+      setStatus("reconnecting");
     }
 
     return () => {
       wsRef.current?.close();
-      if (mockRef.current) window.clearInterval(mockRef.current);
     };
-  }, [user, max, intervalMs, addEvent]);
+  }, [user, max, addEvent]);
+
+  // Mirror live-event status into the shared connection store
+  useEffect(() => {
+    const wsState: ConnectionState =
+      status === "live" ? "connected" :
+      status === "reconnecting" ? "reconnecting" : "reconnecting";
+    useWsStore.getState().setState(wsState);
+  }, [status]);
 
   return { events, status };
 }

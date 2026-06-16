@@ -71,6 +71,15 @@ export type Permission =
   | "view:digital-twin"
   | "view:attack-replay"
   | "view:threat-simulation"
+  // write
+  | "manage:knowledge"
+  | "manage:cases"
+  | "manage:sso"
+  | "manage:policies"
+  | "manage:detection-rules"
+  | "act:investigations"
+  | "act:reports"
+  | "act:automation"
   // admin
   | "manage:settings"
   | "manage:billing"
@@ -89,6 +98,8 @@ const ALL: Permission[] = [
   "view:compliance", "view:audit", "view:sso", "view:automation", "view:ownership",
   "view:reports", "view:developer", "view:status", "view:knowledge", "view:platform-health",
   "view:digital-twin", "view:attack-replay", "view:threat-simulation",
+  "manage:knowledge", "manage:cases", "manage:sso", "manage:policies",
+  "manage:detection-rules", "act:investigations", "act:reports", "act:automation",
   "manage:settings", "manage:billing", "view:onboarding", "manage:integrations", "manage:org", "manage:accounts", "view:access-matrix",
 ];
 
@@ -112,25 +123,31 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     ...OPERATE_READ, "act:incidents",
     ...DETECT_READ,
     ...INVESTIGATE_READ,
-    "view:security-graph", "view:query", "view:detection-rules",
-    "view:audit", "view:status", "view:knowledge", "view:reports",
+    "act:investigations",
+    "view:security-graph", "view:query", "view:detection-rules", "manage:detection-rules",
+    "view:audit", "view:status", "view:knowledge", "manage:knowledge",
+    "view:reports", "act:reports",
+    "view:automation", "act:automation",
+    "manage:cases",
   ],
   threat_hunter: [
     "view:dashboard", "view:events", "view:incidents", "view:alerts", "view:notifications",
     ...DETECT_READ,
     ...INVESTIGATE_READ,
-    "view:security-graph", "view:query", "view:detection-rules",
+    "act:investigations",
+    "view:security-graph", "view:query", "view:detection-rules", "manage:detection-rules",
     "view:audit", "view:knowledge", "view:reports", "view:threat-simulation", "view:attack-replay",
   ],
   incident_responder: [
     ...OPERATE_READ, "act:incidents",
     "view:endpoints", "view:identity", "view:network",
-    "view:attack-graph", "view:investigations", "view:forensics", "view:timeline", "view:copilot",
-    "view:audit", "view:status",
+    "view:attack-graph", "view:investigations", "act:investigations", "view:forensics", "view:timeline", "view:copilot",
+    "view:audit", "view:status", "manage:cases",
+    "view:automation", "act:automation",
   ],
   compliance_officer: [
     "view:dashboard", "view:executive",
-    "view:compliance", "view:audit", "view:policies", "view:ownership",
+    "view:compliance", "view:audit", "view:policies", "manage:policies", "view:ownership",
     "view:reports", "view:knowledge", "view:access-matrix",
   ],
   viewer: [
@@ -195,4 +212,8 @@ export function permissionForPath(pathname: string): Permission | null {
   // prefix match (handles /incidents/:id, etc.)
   const hit = Object.keys(ROUTE_PERMISSIONS).find((p) => pathname === p || pathname.startsWith(p + "/"));
   return hit ? ROUTE_PERMISSIONS[hit] : null;
+}
+
+export function hasPermission(userPerms: Permission[], required: Permission): boolean {
+  return userPerms.includes(required);
 }

@@ -1,23 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { Cloud, CloudOff, Database, Globe, Lock, TriangleAlert as AlertTriangle, Server, Shield, ShieldAlert, ShieldCheck, KeyRound, MapPin, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge, SeverityDot } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { useCloudSummary, useCloudResources, useCloudAccounts, useCloudIamFindings, useCloudStorageBuckets, useCloudCompliance } from "@/lib/api-hooks";
+import type { CloudAccountApi, CloudResourceApi, CloudIamFindingApi, CloudStorageBucketApi } from "@/lib/api-hooks";
 import { Progress } from "@/components/ui/progress";
-import { useInspector } from "@/lib/inspector-store";
-import { formatDistanceToNow } from "date-fns";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/cloud-security")({
-  head: () => ({ meta: [{ title: "Cloud Security — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Cloud Security â€” NEXUS" }] }),
   component: CloudSecurityPage,
 });
 
-/* ──────────────────────────────────────────────────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Helpers                                                              */
-/* ──────────────────────────────────────────────────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 type Exposure = "public" | "internal" | "private";
 
@@ -67,9 +66,70 @@ const PROVIDER_BADGE: Record<string, string> = {
   GCP: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
 };
 
-/* ──────────────────────────────────────────────────────────────────── */
+interface RegionInfo {
+  code: string;
+  label: string;
+  provider: string;
+  resources: number;
+  healthy: number;
+  critical: number;
+}
+
+function toSeverity(severity: string | null | undefined): Severity {
+  if (severity === "critical" || severity === "high" || severity === "medium" || severity === "low" || severity === "info" || severity === "healthy") {
+    return severity;
+  }
+  return "info";
+}
+
+function normalizeExposure(exposure: string | null | undefined): Exposure {
+  return exposure === "public" || exposure === "internal" || exposure === "private" ? exposure : "private";
+}
+
+function providerClass(provider: string | null | undefined): string {
+  return PROVIDER_BADGE[provider ?? ""] ?? "bg-muted text-muted-foreground border-border";
+}
+
+function buildRegions(resources: CloudResourceApi[], accounts: CloudAccountApi[]): RegionInfo[] {
+  const map = new Map<string, RegionInfo>();
+
+  for (const resource of resources) {
+    const key = `${resource.cloud}:${resource.region}`;
+    const current = map.get(key) ?? {
+      code: resource.region,
+      label: resource.region,
+      provider: resource.cloud,
+      resources: 0,
+      healthy: 100,
+      critical: 0,
+    };
+    current.resources += 1;
+    if (resource.severity === "critical") current.critical += 1;
+    current.healthy = Math.max(50, Math.round(((current.resources - current.critical) / current.resources) * 100));
+    map.set(key, current);
+  }
+
+  if (map.size === 0) {
+    for (const account of accounts) {
+      for (const region of account.regions.slice(0, 6)) {
+        map.set(`${account.provider}:${region}`, {
+          code: region,
+          label: region,
+          provider: account.provider,
+          resources: Math.max(1, Math.round(account.resources / Math.max(1, account.regions.length))),
+          healthy: Math.max(50, 100 - account.criticalFindings * 10),
+          critical: account.criticalFindings,
+        });
+      }
+    }
+  }
+
+  return [...map.values()].slice(0, 8);
+}
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Component                                                            */
-/* ──────────────────────────────────────────────────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function CloudSecurityPage() {
   const { data: summary, isLoading: summaryLoading } = useCloudSummary();
@@ -79,11 +139,26 @@ function CloudSecurityPage() {
   const { data: storageBucketsData, isLoading: storageBucketsLoading } = useCloudStorageBuckets();
   const { data: complianceData, isLoading: complianceLoading } = useCloudCompliance();
   
+  const isLoading = summaryLoading || resourcesLoading || accountsLoading || iamFindingsLoading || storageBucketsLoading || complianceLoading;
   const resources = resourcesData?.items ?? [];
-  const accounts = accountsData?.items ?? summary?.accounts ?? [];
+  const accounts: CloudAccountApi[] = accountsData?.items ?? summary?.accounts.map((a) => ({
+    id: a.id,
+    name: a.alias ?? a.accountId,
+    provider: a.provider,
+    resources: a.totalAssets,
+    riskScore: a.riskScore,
+    criticalFindings: a.findings.filter((f) => f.risk === "critical").length,
+    highFindings: a.findings.filter((f) => f.risk === "high").length,
+    compliance: [
+      { framework: "CIS", score: Math.max(40, 100 - a.riskScore) },
+      { framework: "SOC2", score: Math.max(50, 98 - Math.round(a.riskScore / 2)) },
+    ],
+    regions: a.regions,
+  })) ?? [];
   const iamFindings = iamFindingsData?.items ?? [];
   const buckets = storageBucketsData?.items ?? [];
   const compliance = complianceData?.items ?? [];
+  const regions = useMemo(() => buildRegions(resources, accounts), [resources, accounts]);
   
   const publicBuckets = buckets.filter((b) => b.publicAccess).length;
   const criticalResources = resources.filter((r) => r.severity === "critical").length;
@@ -104,11 +179,11 @@ function CloudSecurityPage() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <MetricCard label="Accounts" value={summary?.accountCount ?? (isLoading ? "…" : accounts.length)} icon={Server} tone="default" />
-        <MetricCard label="Resources" value={summary ? String(summary.totalAssets) : isLoading ? "…" : "—"} icon={Database} tone="info" />
+        <MetricCard label="Accounts" value={summary?.accountCount ?? (isLoading ? "â€¦" : accounts.length)} icon={Server} tone="default" />
+        <MetricCard label="Resources" value={summary ? String(summary.totalAssets) : isLoading ? "â€¦" : "â€”"} icon={Database} tone="info" />
         <MetricCard
           label="Open findings"
-          value={summary?.openFindings ?? (isLoading ? "…" : "—")}
+          value={summary?.openFindings ?? (isLoading ? "â€¦" : "â€”")}
           icon={ShieldAlert}
           tone="critical"
         />
@@ -120,7 +195,7 @@ function CloudSecurityPage() {
         />
         <MetricCard
           label="Avg risk"
-          value={summary ? `${summary.avgRisk}%` : isLoading ? "…" : "—"}
+          value={summary ? `${summary.avgRisk}%` : isLoading ? "â€¦" : "â€”"}
           icon={Lock}
           tone="healthy"
         />
@@ -144,9 +219,14 @@ function CloudSecurityPage() {
           <div>
             <SectionHeader icon={Eye} title="Exposed Assets" subtitle="Resources by exposure status" />
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 mt-2">
-              {RESOURCES.filter((r) => r.severity !== "healthy").map((res) => (
+              {resources.filter((r) => r.severity !== "healthy").map((res) => (
                 <ResourceCard key={res.id} resource={res} />
               ))}
+              {!resourcesLoading && resources.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border bg-surface/40 p-4 text-xs text-muted-foreground">
+                  No cloud resources have been ingested yet.
+                </div>
+              )}
             </div>
           </div>
 
@@ -156,9 +236,14 @@ function CloudSecurityPage() {
             <div>
               <SectionHeader icon={KeyRound} title="IAM Findings" subtitle="Policy & credential analysis" />
               <div className="flex flex-col gap-1.5 mt-2">
-                {IAM_FINDINGS.map((f) => (
+                {iamFindings.map((f) => (
                   <IAMRow key={f.id} finding={f} />
                 ))}
+                {!iamFindingsLoading && iamFindings.length === 0 && (
+                  <div className="rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                    No open IAM findings.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -166,9 +251,14 @@ function CloudSecurityPage() {
             <div>
               <SectionHeader icon={Database} title="Storage Exposure" subtitle="Bucket & blob posture" />
               <div className="flex flex-col gap-1.5 mt-2">
-                {STORAGE_BUCKETS.map((b) => (
+                {buckets.map((b) => (
                   <StorageRow key={b.id} bucket={b} />
                 ))}
+                {!storageBucketsLoading && buckets.length === 0 && (
+                  <div className="rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                    No storage exposure findings.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -179,9 +269,14 @@ function CloudSecurityPage() {
             <div>
               <SectionHeader icon={MapPin} title="Region Map" subtitle="Resources per region" />
               <div className="flex flex-col gap-2 mt-2">
-                {REGIONS.map((reg) => (
+                {regions.map((reg) => (
                   <RegionRow key={reg.code} region={reg} />
                 ))}
+                {!isLoading && regions.length === 0 && (
+                  <div className="rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                    No region telemetry yet.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -189,9 +284,14 @@ function CloudSecurityPage() {
             <div>
               <SectionHeader icon={ShieldCheck} title="Compliance Overlays" subtitle="Framework status per account" />
               <div className="flex flex-col gap-2 mt-2">
-                {ACCOUNTS.map((acct) => (
+                {accounts.map((acct) => (
                   <ComplianceCard key={acct.id} account={acct} />
                 ))}
+                {compliance.length > 0 && (
+                  <div className="rounded-md border border-border bg-background/50 px-3 py-2 text-[11px] text-muted-foreground">
+                    {compliance.length} framework assessments are available from the compliance backend.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -217,13 +317,13 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementTyp
   );
 }
 
-function AccountCard({ account }: { account: CloudAccount }) {
+function AccountCard({ account }: { account: CloudAccountApi }) {
   const barColor = riskBarColor(account.riskScore);
   return (
     <div className="rounded-lg border border-border bg-surface/60 p-3 hover:border-border/80 transition-colors">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className={cn("inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", PROVIDER_BADGE[account.provider])}>
+          <span className={cn("inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", providerClass(account.provider))}>
             {account.provider}
           </span>
           <span className="text-sm font-medium truncate">{account.name}</span>
@@ -242,24 +342,25 @@ function AccountCard({ account }: { account: CloudAccount }) {
   );
 }
 
-function ResourceCard({ resource }: { resource: CloudResource }) {
+function ResourceCard({ resource }: { resource: CloudResourceApi }) {
+  const exposure = normalizeExposure(resource.exposure);
   return (
     <div className="rounded-lg border border-border bg-surface/60 p-3 hover:border-border/80 transition-colors">
       <div className="flex items-center justify-between mb-1.5">
         <span
           className={cn(
             "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider",
-            EXPOSURE_STYLES[resource.exposure],
+            EXPOSURE_STYLES[exposure],
           )}
         >
-          {EXPOSURE_LABELS[resource.exposure]}
+          {EXPOSURE_LABELS[exposure]}
         </span>
-        <SeverityBadge severity={resource.severity} className="text-[9px]" />
+        <SeverityBadge severity={toSeverity(resource.severity)} className="text-[9px]" />
       </div>
       <div className="text-sm font-medium truncate">{resource.name}</div>
       <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{resource.finding}</div>
       <div className="mt-1.5 flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
-        <span className={cn("inline-flex items-center rounded border px-1 py-0.5", PROVIDER_BADGE[resource.cloud])}>
+        <span className={cn("inline-flex items-center rounded border px-1 py-0.5", providerClass(resource.cloud))}>
           {resource.cloud}
         </span>
         <span>{resource.account}</span>
@@ -269,10 +370,10 @@ function ResourceCard({ resource }: { resource: CloudResource }) {
   );
 }
 
-function IAMRow({ finding }: { finding: IAMPolicyFinding }) {
+function IAMRow({ finding }: { finding: CloudIamFindingApi }) {
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2 hover:bg-surface/60 transition-colors">
-      <SeverityDot severity={finding.severity} />
+      <SeverityDot severity={toSeverity(finding.severity)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium truncate">{finding.principal}</span>
@@ -288,14 +389,14 @@ function IAMRow({ finding }: { finding: IAMPolicyFinding }) {
   );
 }
 
-function StorageRow({ bucket }: { bucket: StorageBucket }) {
+function StorageRow({ bucket }: { bucket: CloudStorageBucketApi }) {
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-surface/40 px-3 py-2 hover:bg-surface/60 transition-colors">
-      <SeverityDot severity={bucket.severity} />
+      <SeverityDot severity={toSeverity(bucket.severity)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium truncate">{bucket.name}</span>
-          <span className={cn("inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-mono", PROVIDER_BADGE[bucket.cloud])}>
+          <span className={cn("inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-mono", providerClass(bucket.cloud))}>
             {bucket.cloud}
           </span>
         </div>
@@ -327,7 +428,6 @@ function StorageRow({ bucket }: { bucket: StorageBucket }) {
   );
 }
 
-type RegionInfo = (typeof REGIONS)[number];
 function RegionRow({ region }: { region: RegionInfo }) {
   const healthPercent = region.healthy;
   return (
@@ -359,11 +459,11 @@ function RegionRow({ region }: { region: RegionInfo }) {
   );
 }
 
-function ComplianceCard({ account }: { account: CloudAccount }) {
+function ComplianceCard({ account }: { account: CloudAccountApi }) {
   return (
     <div className="rounded-md border border-border bg-surface/40 px-3 py-2.5 hover:bg-surface/60 transition-colors">
       <div className="flex items-center gap-2 mb-2">
-        <span className={cn("inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", PROVIDER_BADGE[account.provider])}>
+        <span className={cn("inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", providerClass(account.provider))}>
           {account.provider}
         </span>
         <span className="text-xs font-medium truncate">{account.name}</span>
@@ -384,3 +484,4 @@ function ComplianceCard({ account }: { account: CloudAccount }) {
     </div>
   );
 }
+

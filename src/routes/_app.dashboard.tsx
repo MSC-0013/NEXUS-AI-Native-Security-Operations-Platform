@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Activity, TriangleAlert as AlertTriangle, Boxes, Cloud, FingerprintPattern as Fingerprint, Gauge, ShieldAlert, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Activity, TriangleAlert as AlertTriangle, Boxes, Cloud, Download, FingerprintPattern as Fingerprint, Gauge, ShieldAlert, ShieldCheck, Sparkles, Zap } from "lucide-react";
 import { useMemo } from "react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer,
@@ -11,7 +11,7 @@ import { WorkspaceContext } from "@/components/workspace-context";
 import { useInspector } from "@/lib/inspector-store";
 
 import { useLiveEvents } from "@/lib/realtime";
-import { useDashboardStats, useIncidents } from "@/lib/api-hooks";
+import { useDashboardStats, useIncidents, useExportReport } from "@/lib/api-hooks";
 import { useAuth } from "@/lib/auth-store";
 import { formatDistanceToNow } from "date-fns";
 
@@ -31,6 +31,21 @@ function DashboardPage() {
   const { data: apiIncidents } = useIncidents({ limit: 6 });
   const { events: live, status: streamStatus } = useLiveEvents(40, 1400);
   const openInspector = useInspector((s) => s.open);
+  const navigate = useNavigate();
+  const exportReport = useExportReport();
+
+  const handleExport = () => {
+    exportReport.mutate(
+      {
+        title: `SOC Dashboard Summary ${new Date().toISOString().slice(0, 10)}`,
+        reportType: "dashboard_summary",
+      },
+      {
+        onError: (err) =>
+          alert(err instanceof Error ? `Export failed: ${err.message}` : "Export failed"),
+      },
+    );
+  };
 
 
 
@@ -65,10 +80,18 @@ function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Security Operations Center</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button className="rounded-md border border-border bg-surface/60 px-3 py-1.5 text-sm hover:bg-surface">
-            Export
+          <button
+            onClick={handleExport}
+            disabled={exportReport.isPending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface/60 px-3 py-1.5 text-sm hover:bg-surface disabled:opacity-50"
+          >
+            <Download className="size-3.5" />
+            {exportReport.isPending ? "Exporting…" : "Export"}
           </button>
-          <button className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">
+          <button
+            onClick={() => navigate({ to: "/copilot" })}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
             <Sparkles className="size-3.5" /> Ask Copilot
           </button>
         </div>

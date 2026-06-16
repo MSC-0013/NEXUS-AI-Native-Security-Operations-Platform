@@ -34,4 +34,38 @@ export async function endpointsRoutes(app: FastifyInstance) {
     const ep = await service.isolate(getUser(request).orgId, id);
     return reply.send(ep);
   });
+
+  app.post("/v1/endpoints/:id/unisolate", {
+    preHandler: authGuard(app.env, "act:incidents"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const ep = await service.unisolate(getUser(request).orgId, id);
+    return reply.send(ep);
+  });
+
+  app.post("/v1/endpoints/:id/scan", {
+    preHandler: authGuard(app.env, "act:incidents"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await service.scan(getUser(request).orgId, id);
+    return reply.send(result);
+  });
+
+  app.get("/v1/endpoints/:id/processes", {
+    preHandler: authGuard(app.env, "view:endpoints"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const items = await service.getProcesses(getUser(request).orgId, id);
+    if (!items) throw new NotFoundError("Endpoint not found");
+    return reply.send({ items });
+  });
+
+  app.get("/v1/endpoints/:id/network", {
+    preHandler: authGuard(app.env, "view:endpoints"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const items = await service.getNetworkConnections(getUser(request).orgId, id);
+    if (!items) throw new NotFoundError("Endpoint not found");
+    return reply.send({ items });
+  });
 }

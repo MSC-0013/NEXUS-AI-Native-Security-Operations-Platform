@@ -101,14 +101,7 @@ function LoginPage() {
                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 />
               </Field>
-              <Field label="Demo role">
-                <select
-                  value={role} onChange={(e) => setRole(e.target.value as Role)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-                >
-                  {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                </select>
-              </Field>
+              
             </div>
 
             {error && (

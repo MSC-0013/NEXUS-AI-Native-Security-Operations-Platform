@@ -3,8 +3,8 @@
 Enterprise-grade Security Operations Center (SOC) UI inspired by CrowdStrike Falcon,
 Microsoft Sentinel, Datadog Security, Splunk ES, Wiz, and Elastic SIEM.
 
-> Built frontend-first on **TanStack Start + React 19 + Tailwind v4 + shadcn/ui**.
-> Backend integration arrives in future phases; all data is mocked but realistic.
+> Built on **TanStack Start + React 19 + Tailwind v4 + shadcn/ui** with a Fastify/Postgres API.
+> Core SOC pages now use backend modules, tenant-scoped database reads, and action mutations.
 
 ## Demo
 
@@ -76,6 +76,24 @@ Infrastructure upgrades:
 - UX utilities: PageSkeleton, EmptyState, ErrorBoundary, LoadingCard, LoadingTable, StaleDataWarning, ConfirmDialog, PageHeader
 - Sidebar navigation expanded with Platform group (Reports, Developer, System Status, Knowledge Base, Platform Health)
 - Incidents upgraded with evidence, responders, SLA timer, severity escalation, communication, root cause workflow, remediation tracking, postmortem generation
+
+## Backend-backed routes and actions
+
+The following routes are integrated with Fastify API modules and database-backed queries or mutations:
+
+| Area | Frontend route | API integration |
+|---|---|---|
+| Events | `/events` | `/v1/events`, `/v1/events/:id/investigation` |
+| Alerts | `/alerts` | `/v1/alerts`, `/v1/alerts/:id/suppress-similar`, `/v1/alerts/:id/incident` |
+| Incidents | `/incidents`, `/incidents/:id` | status, comments, evidence, SLA, responders, escalations, remediations |
+| Cloud security | `/cloud-security` | accounts, resources, IAM findings, storage exposure, compliance overlays |
+| Hunt | `/hunt` | saved hunts, anomalies, and query result execution |
+| Reports | `/reports` | report creation/listing plus client export as PDF, CSV, or JSON |
+| Detection rules | `/detection-rules` | rule listing, backend enable/disable, audit detail modal |
+| Automation | `/automation` | runbook listing and workflow assignment |
+| Developer | `/developer` | API key generation/revocation and webhook registration |
+| Knowledge | `/knowledge` | article listing, detail view, and article creation |
+| Platform status | `/status`, `/platform-health` | platform health checks from database |
 
 See [ROADMAP.md](./ROADMAP.md) for what's next.
 
@@ -165,3 +183,14 @@ src/
 - **No `react-router-dom`** — TanStack Router only.
 - **No `src/pages/`** — pages live in `src/routes/` (flat dot naming).
 - **Mock data is seeded** (`faker.seed(42)`) so demos stay stable per session.
+
+
+| Role               | Email                                                     | Password                                                     |
+| ------------------ | --------------------------------------------------------- | ------------------------------------------------------------ |
+| super_admin        | [admin@acme.federal](mailto:admin@acme.federal)           | NexusSuperAdmin#2024                                        |
+| security_admin     | [amelia.lee@acme.federal](mailto:amelia.lee@acme.federal) | NexusDemo2024!                                              |
+| soc_analyst        | [j.okafor@acme.federal](mailto:j.okafor@acme.federal)     | SOCAnalyst@2024                                             |
+| threat_hunter      | [h.tanaka@acme.federal](mailto:h.tanaka@acme.federal)     | ThreatHunt#2024                                             |
+| incident_responder | [marco.cruz@acme.federal](mailto:marco.cruz@acme.federal) | Respond2024!                                                |
+| compliance_officer | [n.patel@acme.federal](mailto:n.patel@acme.federal)       | Compliance#24                                               |
+| viewer             | [s.ivanov@acme.federal](mailto:s.ivanov@acme.federal)     | ViewOnly2024                                                |

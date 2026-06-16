@@ -1,6 +1,9 @@
+import { eq, and, desc } from "drizzle-orm";
 import type postgres from "postgres";
 import type { DbClient } from "@nexus/db";
+import { endpoints, endpointProcesses, endpointNetworkConnections, endpointMalwareIndicators } from "@nexus/db/schema";
 import { withTenant } from "../../lib/tenant.js";
+import { NotFoundError } from "../../lib/errors.js";
 
 export interface ForensicsProcessDto {
   pid: number;
@@ -43,49 +46,100 @@ export interface ForensicsDto {
   artifacts: ForensicsArtifactDto[];
 }
 
-const DEFAULT_DATA: ForensicsDto = {
-  fileEvents: [
-    { time: "14:23:01", action: "create", path: "C:\\Temp\\beacon.dll", hash: "a3f2b1c8", size: "245KB", severity: "critical" },
-    { time: "14:23:15", action: "modify", path: "C:\\Windows\\System32\\drivers\\etc\\hosts", hash: "d4e5f6a7", size: "1KB", severity: "high" },
-    { time: "14:23:42", action: "create", path: "C:\\Users\\svc\\AppData\\svchost.exe", hash: "b7c8d9e0", size: "89KB", severity: "critical" },
-    { time: "14:24:01", action: "delete", path: "C:\\Temp\\staging.zip", hash: "—", size: "—", severity: "high" },
-    { time: "14:24:18", action: "rename", path: "beacon.dll → update.dll", hash: "a3f2b1c8", size: "245KB", severity: "high" },
-  ],
-  processTree: [
-    { pid: 4832, name: "w3wp.exe", ppid: 712, cmdline: "C:\\Windows\\System32\\inetsrv\\w3wp.exe -ap \"DefaultAppPool\"", user: "SYSTEM", start: "14:00:01", severity: "info" },
-    { pid: 5104, name: "powershell.exe", ppid: 4832, cmdline: "powershell -enc JABjAGwA...", user: "SYSTEM", start: "14:23:01", severity: "critical" },
-    { pid: 5210, name: "svchost.exe", ppid: 5104, cmdline: "C:\\Users\\svc\\AppData\\svchost.exe --c2 185.220.101.34", user: "SYSTEM", start: "14:23:42", severity: "critical" },
-    { pid: 5315, name: "cmd.exe", ppid: 5210, cmdline: "cmd /c whoami /all", user: "SYSTEM", start: "14:24:05", severity: "high" },
-  ],
-  binaries: [
-    { name: "beacon.dll", hash: "a3f2b1c8d4e5f6a7", type: "DLL", detection: "Cobalt Strike Beacon", score: 98, severity: "critical" },
-    { name: "svchost.exe", hash: "b7c8d9e0f1a2b3c4", type: "PE", detection: "Cobalt Strike Stager", score: 95, severity: "critical" },
-    { name: "update.ps1", hash: "c9d0e1f2a3b4c5d6", type: "Script", detection: "Living-off-the-Land", score: 72, severity: "high" },
-  ],
-  artifacts: [
-    { type: "Network Socket", detail: "TCP 185.220.101.34:443 ESTABLISHED", pid: 5210 },
-    { type: "Mutex", detail: "Global\\{A3F2B1C8-D4E5-F6A7}", pid: 5210 },
-    { type: "Loaded DLL", detail: "wininet.dll (HTTP C2 transport)", pid: 5210 },
-    { type: "Registry", detail: "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\svchost", pid: 5210 },
-  ],
-};
+function severityFromMalwareFlags(isMalicious: boolean | null, isElevated: boolean | null): ForensicsProcessDto["severity"] {
+  if (isMalicious) return "critical";
+  if (isElevated) return "high";
+  return "info";
+}
+
+function severityToScore(severity: string | null): number {
+  switch (severity) {
+    case "critical": return 95;
+    case "high": return 80;
+    case "medium": return 55;
+    default: return 30;
+  }
+}
 
 export class ForensicsService {
   constructor(private db: DbClient, private client: postgres.Sql) {}
 
-  async getForensicsData(orgId: string, endpointId: string) {
+  async getForensicsData(orgId: string, endpointId: string): Promise<ForensicsDto> {
     return withTenant(this.client, orgId, async () => {
+      const [endpoint] = await this.db
+        .select({ id: endpoints.id })
+        .from(endpoints)
+        .where(and(eq(endpoints.id, endpointId), eq(endpoints.organizationId, orgId)))
+        .limit(1);
+      if (!endpoint) throw new NotFoundError("Endpoint not found");
+
+      const [processes, indicators, connections] = await Promise.all([
+        this.db
+          .select()
+          .from(endpointProcesses)
+          .where(eq(endpointProcesses.endpointId, endpointId))
+          .orderBy(desc(endpointProcesses.startedAt))
+          .limit(50),
+        this.db
+          .select()
+          .from(endpointMalwareIndicators)
+          .where(eq(endpointMalwareIndicators.endpointId, endpointId))
+          .orderBy(desc(endpointMalwareIndicators.detectedAt))
+          .limit(50),
+        this.db
+          .select({
+            id: endpointNetworkConnections.id,
+            direction: endpointNetworkConnections.direction,
+            protocol: endpointNetworkConnections.protocol,
+            localIp: endpointNetworkConnections.localIp,
+            localPort: endpointNetworkConnections.localPort,
+            remoteIp: endpointNetworkConnections.remoteIp,
+            remotePort: endpointNetworkConnections.remotePort,
+            remoteHost: endpointNetworkConnections.remoteHost,
+            isMalicious: endpointNetworkConnections.isMalicious,
+            iocMatched: endpointNetworkConnections.iocMatched,
+            connectionAt: endpointNetworkConnections.connectionAt,
+            processPid: endpointProcesses.pid,
+          })
+          .from(endpointNetworkConnections)
+          .leftJoin(endpointProcesses, eq(endpointNetworkConnections.processId, endpointProcesses.id))
+          .where(eq(endpointNetworkConnections.endpointId, endpointId))
+          .orderBy(desc(endpointNetworkConnections.connectionAt))
+          .limit(50),
+      ]);
+
       return {
-        ...DEFAULT_DATA,
-        fileEvents: DEFAULT_DATA.fileEvents.map((event) => ({
-          ...event,
-          path: event.path.replace("prod-web-01", endpointId),
+        // No file-system event collector is wired yet — report real (empty) state
+        // rather than synthesizing entries.
+        fileEvents: [],
+        processTree: processes.map((p) => ({
+          pid: p.pid ?? 0,
+          name: p.processName,
+          ppid: p.parentPid ?? 0,
+          cmdline: p.commandLine ?? "",
+          user: p.username ?? "—",
+          start: p.startedAt?.toISOString() ?? "",
+          severity: severityFromMalwareFlags(p.isMalicious, p.isElevated),
         })),
-        processTree: DEFAULT_DATA.processTree.map((process) => ({
-          ...process,
-          cmdline: process.cmdline.includes("185.220.101.34") ? process.cmdline.replace("185.220.101.34", endpointId) : process.cmdline,
+        binaries: indicators.map((i) => ({
+          name: i.description || i.indicator,
+          hash: i.indicator,
+          type: i.indicatorType,
+          detection: i.description || `${i.indicatorType} indicator`,
+          score: severityToScore(i.severity),
+          severity: (i.severity as ForensicsBinaryDto["severity"]) ?? "high",
         })),
-      } as const;
+        artifacts: connections.map((c) => ({
+          type: "Network Socket",
+          detail: [
+            c.protocol ?? "TCP",
+            c.direction ? `${c.direction.toUpperCase()}` : null,
+            `${c.localIp ?? "?"}:${c.localPort ?? "?"} -> ${c.remoteIp ?? c.remoteHost ?? "?"}:${c.remotePort ?? "?"}`,
+            c.iocMatched ? `(matched IOC: ${c.iocMatched})` : c.isMalicious ? "(flagged malicious)" : null,
+          ].filter(Boolean).join(" "),
+          pid: c.processPid ?? 0,
+        })),
+      };
     });
   }
 }

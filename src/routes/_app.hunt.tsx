@@ -29,22 +29,50 @@ function HuntPage() {
   const [queryText, setQueryText] = useState("");
   const [iocSearch, setIocSearch] = useState("");
   const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(0);
+  const { data: resultsData, isFetching: resultsLoading } = useHuntResults(
+    showResults ? submittedQuery : undefined,
+    PAGE_SIZE,
+    page * PAGE_SIZE,
+  );
+  const results = resultsData?.items ?? [];
+  const totalResults = resultsData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalResults / PAGE_SIZE));
 
   const activeQuery = queries.find((q) => q.id === selectedQuery);
   const filteredIocs = iocSearch
     ? iocItems.filter((i) => i.value.toLowerCase().includes(iocSearch.toLowerCase()))
     : iocItems;
+  const pivots = [
+    {
+      id: "pivot-ioc-events",
+      from: `${iocItems.length} IOCs`,
+      to: `${criticalEvents.length} high-signal events`,
+      description: "Correlate active indicators with recent event telemetry",
+      entityCount: Math.max(iocItems.length, criticalEvents.length),
+    },
+    {
+      id: "pivot-anomaly-assets",
+      from: `${anomalies.length} anomalies`,
+      to: `${new Set(anomalies.flatMap((a) => a.assets)).size} assets`,
+      description: "Expand hunt scope from anomaly clusters to affected entities",
+      entityCount: new Set(anomalies.flatMap((a) => a.assets)).size,
+    },
+    {
+      id: "pivot-query-results",
+      from: activeQuery?.name ?? "Current query",
+      to: `${results.length} matches`,
+      description: "Open matching network and endpoint evidence for investigation",
+      entityCount: results.length,
+    },
+  ];
 
-  const handleRunQuery = async () => {
+  const handleRunQuery = () => {
     setShowResults(true);
-    // In a real scenario, you'd fetch results from the API
-    // For now, just show a placeholder
-    setResults([
-      { time: "14:23:01", src: "prod-web-01", dst: "185.220.101.34", bytes: "2.4MB", proto: "DNS" },
-      { time: "14:23:31", src: "prod-web-01", dst: "185.220.101.34", bytes: "2.1MB", proto: "DNS" },
-      { time: "14:24:01", src: "prod-web-01", dst: "185.220.101.34", bytes: "2.3MB", proto: "DNS" },
-    ]);
+    setPage(0);
+    setSubmittedQuery(queryText || activeQuery?.query || "");
   };
 
   return (
@@ -166,18 +194,45 @@ function HuntPage() {
               <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
                 <BarChart3 className="h-4 w-4 text-primary" />
                 <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Query Results</span>
-                <span className="ml-auto text-[10px] font-mono text-primary">{results.length} matches</span>
+                <span className="ml-auto text-[10px] font-mono text-primary">{resultsLoading ? "running..." : `${totalResults.toLocaleString()} matches`}</span>
               </div>
               <div className="p-4 space-y-2">
+                {resultsLoading && results.length === 0 && (
+                  <div className="rounded bg-background px-3 py-4 text-xs text-muted-foreground">Running query…</div>
+                )}
+                {!resultsLoading && results.length === 0 && (
+                  <div className="rounded bg-background px-3 py-4 text-xs text-muted-foreground">
+                    No matches returned for this hunt query.
+                  </div>
+                )}
                 {results.map((r, i) => (
                   <div key={i} className="flex items-center gap-3 px-3 py-1.5 rounded bg-background text-xs font-mono">
-                    <span className="text-muted-foreground">{r.time}</span>
+                    <span className="text-muted-foreground tabular-nums">{new Date(r.time).toLocaleTimeString()}</span>
                     <span>{r.src}</span>
                     <ArrowRightLeft className="h-3 w-3 text-primary" />
                     <span className="text-critical">{r.dst}</span>
                     <span className="ml-auto text-muted-foreground">{r.bytes} {r.proto}</span>
                   </div>
                 ))}
+                {totalResults > PAGE_SIZE && (
+                  <div className="flex items-center justify-between pt-2 text-[10px] font-mono text-muted-foreground">
+                    <button
+                      onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      disabled={page === 0 || resultsLoading}
+                      className="rounded border border-border px-2 py-1 hover:bg-surface disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span>Page {page + 1} of {totalPages}</span>
+                    <button
+                      onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                      disabled={page >= totalPages - 1 || resultsLoading}
+                      className="rounded border border-border px-2 py-1 hover:bg-surface disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -216,7 +271,7 @@ function HuntPage() {
               <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Attack Pivots</span>
             </div>
             <div className="divide-y divide-border">
-              {PIVOTS.map((p) => (
+              {pivots.map((p) => (
                 <button key={p.id} className="w-full px-4 py-2.5 text-left hover:bg-surface transition-colors">
                   <div className="flex items-center gap-2 text-sm">
                     <span className="font-mono text-foreground">{p.from}</span>

@@ -1,11 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { Fingerprint, KeyRound, ShieldOff, UserCheck, UserX, Users } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
 import { useIdentityAnomalies } from "@/lib/api-hooks";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/identity")({
-  head: () => ({ meta: [{ title: "Identity — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Identity â€” NEXUS" }] }),
   component: IdentityPage,
 });
 
@@ -23,21 +23,21 @@ function IdentityPage() {
       icon={Fingerprint}
       eyebrow="Detect"
       title="Identity"
-      description="Identity threat detection — anomalous sessions, impossible travel, and MFA fatigue."
+      description="Identity threat detection â€” anomalous sessions, impossible travel, and MFA fatigue."
       kpis={[
-        { label: "Anomalies", value: isLoading ? "…" : items.length, icon: Users, tone: "default" },
-        { label: "Critical", value: isLoading ? "…" : critical, icon: ShieldOff, tone: "critical" },
-        { label: "High", value: isLoading ? "…" : high, icon: KeyRound, tone: "high" },
-        { label: "Unique users", value: isLoading ? "…" : new Set(items.map((a) => a.userEmail)).size, icon: UserCheck, tone: "healthy" },
-        { label: "Types", value: isLoading ? "…" : new Set(items.map((a) => a.type)).size, icon: UserX, tone: "info" },
+        { label: "Anomalies", value: isLoading ? "â€¦" : items.length, icon: Users, tone: "default" },
+        { label: "Critical", value: isLoading ? "â€¦" : critical, icon: ShieldOff, tone: "critical" },
+        { label: "High", value: isLoading ? "â€¦" : high, icon: KeyRound, tone: "high" },
+        { label: "Unique users", value: isLoading ? "â€¦" : new Set(items.map((a) => a.userEmail)).size, icon: UserCheck, tone: "healthy" },
+        { label: "Types", value: isLoading ? "â€¦" : new Set(items.map((a) => a.type)).size, icon: UserX, tone: "info" },
       ]}
       tableTitle="High-risk identity events"
       columns={["User", "Type", "Severity", "Description"]}
       rows={
         items.length === 0 && !isLoading
-          ? [{ cells: ["No anomalies", "—", "—", "—"] }]
+          ? [{ cells: ["No anomalies", "â€”", "â€”", "â€”"] }]
           : items.slice(0, 8).map((a) => ({
-              cells: [a.userEmail, a.type, a.severity.toUpperCase(), a.description ?? "—"],
+              cells: [a.userEmail, a.type, a.severity.toUpperCase(), a.description ?? "â€”"],
               severity: sev(a.severity),
             }))
       }
@@ -55,3 +55,4 @@ function IdentityPage() {
     />
   );
 }
+

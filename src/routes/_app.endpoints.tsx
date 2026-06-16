@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { Laptop, ShieldCheck, Cpu, HardDrive, WifiOff, TriangleAlert as AlertTriangle, Lock, Clock as Unlock, Network, Activity, Monitor, MailWarning as FileWarning, UserCheck, Globe, ChevronRight, ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { useInspector } from "@/lib/inspector-store";
 import { formatDistanceToNow } from "date-fns";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -249,7 +249,7 @@ function EndpointsPage() {
       id: e.id,
       hostname: e.hostname,
       os: e.os,
-      user: e.ip || "—",
+      user: e.ip || "â€”",
       agentVersion: e.agentVersion,
       riskScore: e.riskScore,
       status: e.isolated ? "quarantined" : (e.status as EndpointStatus),
@@ -542,6 +542,7 @@ function EndpointsPage() {
 // ---------------------------------------------------------------------------
 
 export const Route = createFileRoute("/_app/endpoints")({
-  head: () => ({ meta: [{ title: "Endpoints — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Endpoints â€” NEXUS" }] }),
   component: EndpointsPage,
 });
+

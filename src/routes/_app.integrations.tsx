@@ -1,11 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2, Plug, Plus, RefreshCw, Workflow, XCircle } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
 import { useIntegrations } from "@/lib/api-hooks";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/integrations")({
-  head: () => ({ meta: [{ title: "Integrations — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Integrations â€” NEXUS" }] }),
   component: IntegrationsPage,
 });
 
@@ -30,17 +30,17 @@ function IntegrationsPage() {
       title="Integrations"
       description="Connected data sources, response actions, and SOAR pipelines."
       kpis={[
-        { label: "Connected", value: isLoading ? "…" : connected, icon: CheckCircle2, tone: "healthy" },
-        { label: "Degraded", value: isLoading ? "…" : degraded, icon: RefreshCw, tone: "high" },
-        { label: "Failing", value: isLoading ? "…" : failing, icon: XCircle, tone: "critical" },
-        { label: "Total", value: isLoading ? "…" : items.length, icon: Workflow, tone: "info" },
+        { label: "Connected", value: isLoading ? "â€¦" : connected, icon: CheckCircle2, tone: "healthy" },
+        { label: "Degraded", value: isLoading ? "â€¦" : degraded, icon: RefreshCw, tone: "high" },
+        { label: "Failing", value: isLoading ? "â€¦" : failing, icon: XCircle, tone: "critical" },
+        { label: "Total", value: isLoading ? "â€¦" : items.length, icon: Workflow, tone: "info" },
         { label: "Catalog", value: "200+", icon: Plus, tone: "default" },
       ]}
       tableTitle="Connected sources"
       columns={["Integration", "Provider", "Events ingested", "Status"]}
       rows={
         items.length === 0 && !isLoading
-          ? [{ cells: ["No integrations", "—", "—", "—"] }]
+          ? [{ cells: ["No integrations", "â€”", "â€”", "â€”"] }]
           : items.map((i) => ({
               cells: [i.displayName, i.provider, i.eventsIngested.toLocaleString(), i.status.toUpperCase()],
               severity: statusSeverity(i.status),
@@ -60,3 +60,4 @@ function IntegrationsPage() {
     />
   );
 }
+

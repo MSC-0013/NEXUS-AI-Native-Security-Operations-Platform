@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { FileText, Download, Calendar, Clock, ChartBar as BarChart3, Shield, TriangleAlert as AlertTriangle, Activity, Search, ChevronRight, Eye, FileSpreadsheet, File as FileJson, FileDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
-import { useReports } from "@/lib/api-hooks";
+import { useCreateReport, useReports } from "@/lib/api-hooks";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -91,6 +91,7 @@ const FREQ_BADGE: Record<string, string> = {
 
 function ReportsPage() {
   const { data: reportsData, isLoading } = useReports();
+  const createReport = useCreateReport();
   const generatedReports: GeneratedReport[] = useMemo(
     () =>
       (reportsData?.items ?? []).map((r) => ({
@@ -110,6 +111,52 @@ function ReportsPage() {
   const failedCount = generatedReports.filter((r) => r.status === "failed").length;
   const [detailReport, setDetailReport] = useState<GeneratedReport | null>(null);
   const [schedFreq, setSchedFreq] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [format, setFormat] = useState<"pdf" | "csv" | "json">("csv");
+  const handleGenerateReport = (template: Template) => {
+    createReport.mutate({
+      title: `${template.title} - ${new Date().toLocaleDateString()}`,
+      reportType: template.category,
+    });
+  };
+  const downloadReport = async (report: GeneratedReport, format: "pdf" | "csv" | "json") => {
+    if (format === "csv" && report.id) {
+      // Use real backend CSV generation
+      const { apiFetchBlob } = await import("@/lib/api-client");
+      try {
+        const { blob, filename } = await apiFetchBlob(`/v1/reports/${report.id}/download`);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      } catch {
+        // fall through to client-side fallback
+      }
+    }
+    const payload = {
+      id: report.id,
+      title: report.name,
+      type: report.type,
+      generatedAt: report.generatedAt,
+      status: report.status,
+      sections: ["Overview", "Key Findings", "Risk Trend", "Recommendations"],
+    };
+    const content =
+      format === "csv"
+        ? `id,title,type,status,generatedAt\n${payload.id},"${payload.title}",${payload.type},${payload.status},${payload.generatedAt}\n`
+        : format === "json"
+          ? JSON.stringify(payload, null, 2)
+          : `NEXUS Report\n\n${payload.title}\nType: ${payload.type}\nStatus: ${payload.status}\nGenerated: ${payload.generatedAt}\n\nSections:\n- ${payload.sections.join("\n- ")}`;
+    const blob = new Blob([content], { type: format === "json" ? "application/json" : format === "csv" ? "text/csv" : "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${report.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -119,7 +166,11 @@ function ReportsPage() {
           <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Operations / Reports</div>
           <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
         </div>
-        <button className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">
+        <button
+          onClick={() => handleGenerateReport(TEMPLATES[0])}
+          disabled={createReport.isPending}
+          className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+        >
           <FileText className="size-3.5" /> Generate Report
         </button>
       </div>
@@ -127,7 +178,7 @@ function ReportsPage() {
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard label="Generated" value={isLoading ? "…" : generatedReports.length} icon={FileDown} tone="info" />
-        <MetricCard label="Scheduled" value={SCHEDULED_REPORTS.length} icon={Calendar} tone="default" />
+        <MetricCard label="Scheduled" value={SCHEDULED.length} icon={Calendar} tone="default" />
         <MetricCard label="Failed" value={isLoading ? "…" : failedCount} icon={AlertTriangle} tone="critical" />
         <MetricCard label="Ready" value={isLoading ? "…" : generatedReports.filter((r) => r.status === "ready").length} icon={Download} tone="healthy" />
       </div>
@@ -163,7 +214,11 @@ function ReportsPage() {
                     <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
                       <Clock className="size-3" /> {t.frequency}
                     </span>
-                    <button className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                    <button
+                      onClick={() => handleGenerateReport(t)}
+                      disabled={createReport.isPending}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
                       <FileText className="size-3" /> Generate
                     </button>
                   </div>
@@ -224,13 +279,13 @@ function ReportsPage() {
                       <td className="px-4 py-3 text-right">
                         {r.status === "ready" && (
                           <div className="inline-flex items-center gap-1">
-                            <button className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Download PDF">
+                            <button onClick={(event) => { event.stopPropagation(); downloadReport(r, "pdf"); }} className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Download PDF">
                               <Download className="size-3" />
                             </button>
-                            <button className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Export CSV">
+                            <button onClick={(event) => { event.stopPropagation(); downloadReport(r, "csv"); }} className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Export CSV">
                               <FileSpreadsheet className="size-3" />
                             </button>
-                            <button className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Export JSON">
+                            <button onClick={(event) => { event.stopPropagation(); downloadReport(r, "json"); }} className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground" title="Export JSON">
                               <FileJson className="size-3" />
                             </button>
                           </div>
@@ -284,13 +339,13 @@ function ReportsPage() {
                   <div className="pt-2 border-t border-border space-y-2">
                     <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Export as</div>
                     <div className="flex gap-2">
-                      <button className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                      <button onClick={() => downloadReport(detailReport, "pdf")} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
                         <Download className="size-3" /> PDF
                       </button>
-                      <button className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                      <button onClick={() => downloadReport(detailReport, "csv")} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
                         <FileSpreadsheet className="size-3" /> CSV
                       </button>
-                      <button className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                      <button onClick={() => downloadReport(detailReport, "json")} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
                         <FileJson className="size-3" /> JSON
                       </button>
                     </div>

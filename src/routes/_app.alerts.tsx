@@ -1,17 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { Bell, BellRing, ListFilter as Filter, CircleCheck as CheckCircle2, TriangleAlert as AlertTriangle, Clock, VolumeX, Zap, Timer, ArrowRight, Mail, MessageSquare, Radio, Globe, Shield, ChevronDown, EyeOff, Sparkles } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { useAlerts } from "@/lib/api-hooks";
+import { useAlerts, useCreateIncidentFromAlert, useSuppressSimilarAlerts, useSuppressionRules, useUpdateSuppressionRule, useCreateSuppressionRule, useDeleteSuppressionRule } from "@/lib/api-hooks";
 import { Switch } from "@/components/ui/switch";
 import { useInspector } from "@/lib/inspector-store";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/alerts")({
-  head: () => ({ meta: [{ title: "Alerts — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Alerts â€” NEXUS" }] }),
   component: AlertsPage,
 });
 
@@ -149,6 +149,7 @@ function scoreBg(score: number): string {
 /* ------------------------------------------------------------------ */
 
 function AlertsPage() {
+  const navigate = useNavigate();
   const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [snoozePickerId, setSnoozePickerId] = useState<string | null>(null);
@@ -156,13 +157,23 @@ function AlertsPage() {
   const openInspector = useInspector((s) => s.open);
 
   const { data: apiAlerts } = useAlerts({ limit: 100 });
+  const suppressSimilar = useSuppressSimilarAlerts();
+  const createIncident = useCreateIncidentFromAlert();
+  const { data: suppressionData } = useSuppressionRules();
+  const updateRule = useUpdateSuppressionRule();
+  const createRule = useCreateSuppressionRule();
+  const deleteRule = useDeleteSuppressionRule();
+  const suppressionRules = suppressionData?.items ?? [];
+  const [showNewRule, setShowNewRule] = useState(false);
+  const [newRuleName, setNewRuleName] = useState("");
+  const [newRuleCondition, setNewRuleCondition] = useState("");
   const rawAlerts = useMemo<Alert[]>(() => {
     if (!apiAlerts?.items) return [];
     return apiAlerts.items.map((a) => ({
       id: a.id,
       title: a.rule,
       source: a.source,
-      owner: a.owner ?? "—",
+      owner: a.owner ?? "â€”",
       age: new Date(a.createdAt),
       state: (a.suppressed ? "SNOOZED" : a.acknowledged ? "ACK" : a.escalated ? "TRIAGE" : "OPEN") as AlertState,
       severity: a.severity,
@@ -331,6 +342,30 @@ function AlertsPage() {
                       >
                         <Shield className="size-3" />
                       </button>
+                      <button
+                        onClick={() => suppressSimilar.mutate({ id: a.id, reason: `Suppressed duplicate ${a.title}` })}
+                        disabled={suppressSimilar.isPending}
+                        className="rounded border border-border px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:bg-accent disabled:opacity-50"
+                        title="Suppress similar alerts"
+                      >
+                        Suppress similar
+                      </button>
+                      <button
+                        onClick={() =>
+                          createIncident.mutate(
+                            { id: a.id, title: a.title },
+                            {
+                              onSuccess: (incident) =>
+                                navigate({ to: "/incidents/$incidentId", params: { incidentId: incident.code } }),
+                            },
+                          )
+                        }
+                        disabled={createIncident.isPending}
+                        className="rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-primary hover:bg-primary/20 disabled:opacity-50"
+                        title="Create incident from alert"
+                      >
+                        Create incident
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -349,19 +384,55 @@ function AlertsPage() {
             <h2 className="text-sm font-semibold tracking-tight flex items-center gap-2">
               <EyeOff className="size-4 text-muted-foreground" /> Suppression Rules
             </h2>
-            <span className="text-[10px] font-mono text-muted-foreground">{SUPPRESSIONS.filter((r) => r.active).length} active</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-muted-foreground">{suppressionRules.filter((r) => r.isActive).length} active</span>
+              <button onClick={() => setShowNewRule(true)} className="text-[10px] font-mono text-primary hover:underline">+ new</button>
+            </div>
           </div>
+          {showNewRule && (
+            <div className="rounded-md border border-border p-2.5 space-y-2 bg-surface/80">
+              <input
+                className="w-full text-[11px] bg-transparent border-b border-border pb-1 outline-none"
+                placeholder="Rule name"
+                value={newRuleName}
+                onChange={(e) => setNewRuleName(e.target.value)}
+              />
+              <input
+                className="w-full text-[11px] font-mono bg-transparent border-b border-border pb-1 outline-none"
+                placeholder="condition expression"
+                value={newRuleCondition}
+                onChange={(e) => setNewRuleCondition(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { if (newRuleName.trim() && newRuleCondition.trim()) { createRule.mutate({ name: newRuleName.trim(), condition: newRuleCondition.trim() }, { onSuccess: () => { setNewRuleName(""); setNewRuleCondition(""); setShowNewRule(false); } }); } }}
+                  className="text-[11px] font-medium text-primary hover:underline"
+                >Save</button>
+                <button onClick={() => setShowNewRule(false)} className="text-[11px] text-muted-foreground hover:underline">Cancel</button>
+              </div>
+            </div>
+          )}
           <div className="space-y-2">
-            {SUPPRESSIONS.map((rule, i) => (
-              <div key={i} className={cn("rounded-md border border-border p-2.5 space-y-1.5", !rule.active && "opacity-50")}>
+            {suppressionRules.length === 0 && (
+              <p className="text-[11px] text-muted-foreground text-center py-4">No suppression rules. Click "+ new" to add one.</p>
+            )}
+            {suppressionRules.map((rule) => (
+              <div key={rule.id} className={cn("rounded-md border border-border p-2.5 space-y-1.5", !rule.isActive && "opacity-50")}>
                 <div className="flex items-center justify-between">
                   <span className="text-[12px] font-medium">{rule.name}</span>
-                  <Switch checked={rule.active} className="scale-75 origin-right" />
+                  <Switch
+                    checked={rule.isActive}
+                    onCheckedChange={(v) => updateRule.mutate({ id: rule.id, isActive: v })}
+                    className="scale-75 origin-right"
+                  />
                 </div>
                 <div className="text-[11px] font-mono text-muted-foreground leading-snug">{rule.condition}</div>
                 <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                   <span>by {rule.createdBy}</span>
-                  <span>exp: {rule.expiresAt === "Never" ? "Never" : formatDistanceToNow(new Date(rule.expiresAt), { addSuffix: true })}</span>
+                  <div className="flex items-center gap-2">
+                    <span>exp: {rule.expiresAt ? formatDistanceToNow(new Date(rule.expiresAt), { addSuffix: true }) : "Never"}</span>
+                    <button onClick={() => { if (confirm("Delete this rule?")) deleteRule.mutate(rule.id); }} className="text-critical/60 hover:text-critical text-[10px]">âœ•</button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -477,3 +548,4 @@ function AlertsPage() {
     </div>
   );
 }
+

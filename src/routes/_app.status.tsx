@@ -28,6 +28,7 @@ interface Service {
   uptime: string;
   latencyMs: number;
   lastIncident: string;
+  checkedAt?: string;
 }
 
 const SERVICES: Service[] = [
@@ -107,6 +108,17 @@ function overallStatus(services: Service[]): ServiceStatus {
   return "operational";
 }
 
+function percentValue(value: string) {
+  return value.replace(/%$/, "");
+}
+
+function formatUtcTimestamp(value?: string) {
+  if (!value) return "Awaiting platform checks";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Awaiting platform checks";
+  return `${date.toISOString().slice(0, 19).replace("T", " ")} UTC`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -123,13 +135,19 @@ function StatusPage() {
     name: s.name,
     icon: Server,
     status: mapServiceStatus(s.status),
-    uptime: health?.uptime ?? "99.9",
+    uptime: percentValue(health?.uptime ?? "99.9"),
     latencyMs: s.latencyMs ?? 0,
     lastIncident: "—",
+    checkedAt: s.checkedAt,
   }));
   const services = apiServices.length > 0 ? apiServices : SERVICES;
   const systemStatus = overallStatus(services);
-  const overall30d = health?.uptime ?? (services.reduce((sum, s) => sum + parseFloat(s.uptime), 0) / services.length).toFixed(2);
+  const overall30d = percentValue(health?.uptime ?? (services.reduce((sum, s) => sum + parseFloat(s.uptime), 0) / services.length).toFixed(2));
+  const lastCheckedAt = services.reduce<string | undefined>((latest, service) => {
+    if (!service.checkedAt) return latest;
+    if (!latest || service.checkedAt > latest) return service.checkedAt;
+    return latest;
+  }, undefined);
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -143,7 +161,7 @@ function StatusPage() {
         </div>
         <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
           <Clock className="size-3.5" />
-          Last updated: {new Date().toLocaleTimeString()}
+          Last updated: {formatUtcTimestamp(lastCheckedAt)}
         </div>
       </div>
 

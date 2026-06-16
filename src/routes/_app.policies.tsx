@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { useRunbooks } from "@/lib/api-hooks";
+import { useRunbooks, usePolicies, useTogglePolicy } from "@/lib/api-hooks";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { formatDistanceToNow } from "date-fns";
@@ -103,6 +103,9 @@ function PolicyRow({ policy, onToggle }: { policy: Policy; onToggle: (id: string
 
 function PoliciesPage() {
   const { data: runbooksData } = useRunbooks();
+  const { data: policiesData } = usePolicies();
+  const togglePolicyMutation = useTogglePolicy();
+
   const detectionPolicies = useMemo<Policy[]>(
     () =>
       (runbooksData?.items ?? []).map((rb) => ({
@@ -115,24 +118,48 @@ function PoliciesPage() {
       })),
     [runbooksData],
   );
-  const [policies, setPolicies] = useState<Record<string, Policy[]>>({
-    detection: [],
-    alert: ALERT_POLICIES,
-    iam: IAM_POLICIES,
-    endpoint: ENDPOINT_POLICIES,
-    retention: RETENTION_POLICIES,
-    ai: AI_POLICIES,
-  });
-  const mergedPolicies = useMemo(
-    () => ({ ...policies, detection: detectionPolicies.length ? detectionPolicies : policies.detection }),
-    [policies, detectionPolicies],
+
+  // Map API policies to local Policy type, group by category
+  const apiPoliciesByCategory = useMemo<Record<string, Policy[]>>(() => {
+    const grouped: Record<string, Policy[]> = {
+      alert: [...ALERT_POLICIES],
+      iam: [...IAM_POLICIES],
+      endpoint: [...ENDPOINT_POLICIES],
+      retention: [...RETENTION_POLICIES],
+      ai: [...AI_POLICIES],
+    };
+    if (policiesData?.items?.length) {
+      const cats: Record<string, Policy[]> = {};
+      for (const p of policiesData.items) {
+        if (!cats[p.category]) cats[p.category] = [];
+        cats[p.category].push({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          enabled: p.isEnabled,
+          severity: p.severity as Policy["severity"],
+          violations: p.violationCount,
+          lastTriggered: p.lastTriggeredAt ? new Date(p.lastTriggeredAt) : undefined,
+        });
+      }
+      return cats;
+    }
+    return grouped;
+  }, [policiesData]);
+
+  const mergedPolicies: Record<string, Policy[]> = useMemo(
+    () => ({ ...apiPoliciesByCategory, detection: detectionPolicies.length ? detectionPolicies : (apiPoliciesByCategory.detection ?? []) }),
+    [apiPoliciesByCategory, detectionPolicies],
   );
 
   const togglePolicy = (tab: string, id: string) => {
-    setPolicies((prev) => ({
-      ...prev,
-      [tab]: prev[tab].map((p) => p.id === id ? { ...p, enabled: !p.enabled } : p),
-    }));
+    const current = mergedPolicies[tab]?.find((p) => p.id === id);
+    if (!current) return;
+    // If it's a real DB policy (UUID), call the API; otherwise no-op for mock/runbook items
+    const isUuid = /^[0-9a-f-]{36}$/.test(id) && !id.startsWith("ap-") && !id.startsWith("ip-") && !id.startsWith("ep-") && !id.startsWith("rp-") && !id.startsWith("aip-");
+    if (isUuid) {
+      togglePolicyMutation.mutate({ id, isEnabled: !current.enabled });
+    }
   };
 
   const totalActive = Object.values(mergedPolicies).flat().filter((p) => p.enabled).length;

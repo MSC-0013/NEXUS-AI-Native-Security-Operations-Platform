@@ -1,12 +1,16 @@
-import { AnimatePresence, motion } from "framer-motion";
+﻿import { AnimatePresence, motion } from "framer-motion";
+import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import { X, ExternalLink, FileText, Network, ShieldAlert, User, Bell, Monitor, Bug, Skull, Clock, Brain, Eye, ShieldCheck, ShieldX, Flame, Activity, Lock, Clock as Unlock, Zap, ArrowUpRight, Ban, CircleCheck as CheckCircle2, TriangleAlert as AlertTriangle, Tag, Crosshair, MapPin, Users, Layers, Package, TrendingUp } from "lucide-react";
 import { useInspector } from "@/lib/inspector-store";
+import { useSuppressSimilarEvents, useCreateIncidentFromEvent } from "@/lib/api-hooks";
 import { SeverityBadge } from "./severity-badge";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
-import type { SecurityEvent, Incident, Alert, Endpoint, Vulnerability, ThreatActor } from "@/lib/mock/types";
+import type { SecurityEventDto, IncidentDto, AlertDto, SeverityLevel } from "@nexus/shared";
+import type { Endpoint, Vulnerability, ThreatActor } from "@/lib/ui-types";
 
 /* -------------------------------------------------------------------------- */
 /*  Main panel                                                                */
@@ -57,9 +61,39 @@ export function InspectorPanel() {
 /*  Event Inspector (expanded)                                                */
 /* -------------------------------------------------------------------------- */
 
-function EventInspector({ e }: { e: SecurityEvent }) {
+function EventInspector({ e }: { e: SecurityEventDto }) {
   const aiSummary = generateEventAISummary(e);
   const similarEvents = generateSimilarEvents(e);
+  const navigate = useNavigate();
+  const close = useInspector((s) => s.close);
+  const suppress = useSuppressSimilarEvents();
+  const createIncident = useCreateIncidentFromEvent();
+  const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  const onSuppress = () => {
+    setNotice(null);
+    suppress.mutate(
+      { id: e.id },
+      {
+        onSuccess: (res) =>
+          setNotice({ tone: "ok", text: `Suppressed ${res.suppressedCount} similar event(s). Rule saved.` }),
+        onError: (err) =>
+          setNotice({ tone: "error", text: err instanceof Error ? err.message : "Suppression failed" }),
+      },
+    );
+  };
+
+  const onCreateIncident = () => {
+    setNotice(null);
+    createIncident.mutate(e.id, {
+      onSuccess: (incident) => {
+        close();
+        navigate({ to: "/incidents/$incidentId", params: { incidentId: incident.code } });
+      },
+      onError: (err) =>
+        setNotice({ tone: "error", text: err instanceof Error ? err.message : "Could not create incident" }),
+    });
+  };
 
   return (
     <div className="p-4 space-y-5">
@@ -92,7 +126,7 @@ function EventInspector({ e }: { e: SecurityEvent }) {
 
       <Section title="Identity" icon={User}>
         <KV k="user" v={e.user} />
-        <KV k="session" v={String(e.raw.session)} mono />
+        <KV k="session" v={String(e.raw?.session ?? "-")} mono />
       </Section>
 
       <Section title="Similar Events" icon={Activity}>
@@ -117,12 +151,33 @@ function EventInspector({ e }: { e: SecurityEvent }) {
         </pre>
       </Section>
 
+      {notice && (
+        <div
+          className={cn(
+            "rounded-md border px-3 py-2 text-xs",
+            notice.tone === "ok"
+              ? "border-healthy/40 bg-healthy/10 text-healthy"
+              : "border-critical/40 bg-critical/10 text-critical",
+          )}
+        >
+          {notice.text}
+        </div>
+      )}
+
       <div className="flex gap-2 pt-2">
-        <button className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-2">
-          Suppress similar
+        <button
+          onClick={onSuppress}
+          disabled={suppress.isPending}
+          className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-2 disabled:opacity-50"
+        >
+          {suppress.isPending ? "Suppressing…" : "Suppress similar"}
         </button>
-        <button className="flex-1 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-          Create incident
+        <button
+          onClick={onCreateIncident}
+          disabled={createIncident.isPending}
+          className="flex-1 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+        >
+          {createIncident.isPending ? "Creating…" : "Create incident"}
         </button>
       </div>
     </div>
@@ -133,7 +188,7 @@ function EventInspector({ e }: { e: SecurityEvent }) {
 /*  Incident Inspector (expanded)                                             */
 /* -------------------------------------------------------------------------- */
 
-function IncidentInspector({ i }: { i: Incident }) {
+function IncidentInspector({ i }: { i: IncidentDto }) {
   const slaPercent = calcSLA(i.openedAt, i.severity);
   const slaColor = slaPercent > 75 ? "text-critical" : slaPercent > 50 ? "text-high" : "text-healthy";
   const remediationProgress = calcRemediationProgress(i);
@@ -248,7 +303,7 @@ function IncidentInspector({ i }: { i: Incident }) {
 /*  Alert Inspector                                                           */
 /* -------------------------------------------------------------------------- */
 
-function AlertInspector({ a }: { a: Alert }) {
+function AlertInspector({ a }: { a: AlertDto }) {
   return (
     <div className="p-4 space-y-5">
       <div className="space-y-2">
@@ -622,11 +677,11 @@ function Section({ title, icon: Icon, children }: { title: string; icon: LucideI
   );
 }
 
-function KV({ k, v, mono, highlight }: { k: string; v: string; mono?: boolean; highlight?: string }) {
+function KV({ k, v, mono, highlight }: { k: string; v: string | null | undefined; mono?: boolean; highlight?: string }) {
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
       <span className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">{k}</span>
-      <span className={cn(mono ? "font-mono text-[12px]" : "text-[13px]", highlight)}>{v}</span>
+      <span className={cn(mono ? "font-mono text-[12px]" : "text-[13px]", highlight)}>{v ?? "—"}</span>
     </div>
   );
 }
@@ -648,7 +703,7 @@ function RiskBar({ label, value }: { label: string; value: number }) {
 /*  Mock data generators                                                      */
 /* -------------------------------------------------------------------------- */
 
-function generateEventAISummary(e: SecurityEvent): string {
+function generateEventAISummary(e: SecurityEventDto): string {
   const templates: Record<string, string> = {
     failed_login: `Multiple failed authentication attempts detected from ${e.sourceIp} targeting user ${e.user}. This pattern is consistent with credential brute-force or password spraying. Source originates from ${e.country}.`,
     malware_detection: `Malicious payload identified on host ${e.host}. The detection correlates with known malware families targeting ${e.asset}. Immediate containment is recommended.`,
@@ -664,7 +719,7 @@ function generateEventAISummary(e: SecurityEvent): string {
   return templates[e.type] ?? `Security event detected on ${e.host} from source ${e.sourceIp}. Further investigation recommended.`;
 }
 
-function generateSimilarEvents(e: SecurityEvent): { id: string; message: string; severity: import("@/lib/mock/types").Severity; timestamp: string }[] {
+function generateSimilarEvents(e: SecurityEventDto): { id: string; message: string; severity: SeverityLevel; timestamp: string }[] {
   return [
     { id: `${e.id}-s1`, message: `Similar ${e.type.replace(/_/g, " ")} on related host`, severity: e.severity, timestamp: new Date(Date.now() - 120000).toISOString() },
     { id: `${e.id}-s2`, message: `Related activity from same source IP`, severity: "medium" as const, timestamp: new Date(Date.now() - 600000).toISOString() },
@@ -672,43 +727,44 @@ function generateSimilarEvents(e: SecurityEvent): { id: string; message: string;
   ];
 }
 
-function calcSLA(openedAt: string, severity: import("@/lib/mock/types").Severity): number {
+function calcSLA(openedAt: string, severity: SeverityLevel): number {
   const hours: Record<string, number> = { critical: 1, high: 4, medium: 24, info: 72, healthy: 168 };
   const total = (hours[severity] ?? 24) * 3600000;
   const elapsed = Date.now() - new Date(openedAt).getTime();
   return Math.min(100, (elapsed / total) * 100);
 }
 
-function recommendationCount(i: Incident): number {
+function recommendationCount(i: IncidentDto): number {
   return i.recommendations.length || 1;
 }
 
-function calcRemediationProgress(i: Incident): number {
+function calcRemediationProgress(i: IncidentDto): number {
   const statusWeight: Record<string, number> = { open: 10, investigating: 35, contained: 70, resolved: 100 };
   return statusWeight[i.status] ?? 25;
 }
 
-function generateIncidentAISummary(i: Incident): string {
+function generateIncidentAISummary(i: IncidentDto): string {
   return `Incident ${i.code} is currently ${i.status}, affecting ${i.affectedAssets} assets and ${i.affectedUsers} users. ` +
     `Primary category: ${i.category}. ${i.status === "contained" ? "Containment measures are in effect but monitoring continues." : i.status === "open" ? "Immediate triage and containment actions are recommended." : "Investigation is ongoing with active response coordination."}`;
 }
 
-function generateResponders(i: Incident): { name: string; role: string }[] {
+function generateResponders(i: IncidentDto): { name: string; role: string }[] {
   return [
-    { name: i.assignee, role: "Lead" },
+    { name: i.assignee ?? "Unassigned", role: "Lead" },
     { name: "SOC Analyst", role: "Triage" },
     { name: "IR On-Call", role: "Response" },
   ];
 }
 
-function mapAlertSeverity(s: Alert["severity"]): import("@/lib/mock/types").Severity {
-  const map: Record<string, import("@/lib/mock/types").Severity> = { critical: "critical", high: "high", medium: "medium", low: "info", info: "info" };
+function mapAlertSeverity(s: AlertDto["severity"]): SeverityLevel {
+  const map: Record<string, SeverityLevel> = { critical: "critical", high: "high", medium: "medium", low: "info", info: "info" };
   return map[s] ?? "info";
 }
 
-function riskToSeverity(score: number): import("@/lib/mock/types").Severity {
+function riskToSeverity(score: number): SeverityLevel {
   if (score >= 80) return "critical";
   if (score >= 50) return "high";
   if (score >= 25) return "medium";
   return "healthy";
 }
+

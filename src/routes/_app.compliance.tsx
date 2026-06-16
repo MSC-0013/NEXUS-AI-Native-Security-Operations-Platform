@@ -1,11 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { BadgeCheck, ClipboardCheck, FileCheck, ListChecks, ScrollText, XCircle } from "lucide-react";
 import { ModulePreview } from "@/components/module-preview";
 import { useCompliance } from "@/lib/api-hooks";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/compliance")({
-  head: () => ({ meta: [{ title: "Compliance — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Compliance â€” NEXUS" }] }),
   component: CompliancePage,
 });
 
@@ -23,21 +23,21 @@ function CompliancePage() {
       title="Compliance"
       description="Continuous control monitoring across SOC 2, ISO 27001, PCI-DSS, and more."
       kpis={[
-        { label: "Frameworks", value: isLoading ? "…" : items.length, icon: ScrollText, tone: "info" },
-        { label: "Avg score", value: isLoading ? "…" : `${avgScore}%`, icon: BadgeCheck, tone: "healthy" },
-        { label: "Failing controls", value: isLoading ? "…" : failingControls.length, icon: XCircle, tone: "critical" },
-        { label: "Assessments", value: isLoading ? "…" : items.filter((a) => a.status === "active").length, icon: FileCheck, tone: "default" },
-        { label: "In review", value: isLoading ? "…" : items.filter((a) => a.status !== "passing").length, icon: ClipboardCheck, tone: "high" },
+        { label: "Frameworks", value: isLoading ? "â€¦" : items.length, icon: ScrollText, tone: "info" },
+        { label: "Avg score", value: isLoading ? "â€¦" : `${avgScore}%`, icon: BadgeCheck, tone: "healthy" },
+        { label: "Failing controls", value: isLoading ? "â€¦" : failingControls.length, icon: XCircle, tone: "critical" },
+        { label: "Assessments", value: isLoading ? "â€¦" : items.filter((a) => a.status === "active").length, icon: FileCheck, tone: "default" },
+        { label: "In review", value: isLoading ? "â€¦" : items.filter((a) => a.status !== "passing").length, icon: ClipboardCheck, tone: "high" },
       ]}
       tableTitle="Failing controls"
       columns={["Control", "Framework", "Title", "Status"]}
       rows={
         failingControls.length === 0 && !isLoading
-          ? [{ cells: ["All controls passing", "—", "—", "PASS"], severity: "healthy" }]
+          ? [{ cells: ["All controls passing", "â€”", "â€”", "PASS"], severity: "healthy" }]
           : failingControls.slice(0, 8).map((c) => {
               const assessment = items.find((a) => a.controls.some((x) => x.id === c.id));
               return {
-                cells: [c.controlId, assessment?.framework ?? "—", c.title, c.status.toUpperCase()],
+                cells: [c.controlId, assessment?.framework ?? "â€”", c.title, c.status.toUpperCase()],
                 severity: "high" as Severity,
               };
             })
@@ -53,3 +53,4 @@ function CompliancePage() {
     />
   );
 }
+

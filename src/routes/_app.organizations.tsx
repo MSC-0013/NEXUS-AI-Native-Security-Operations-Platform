@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Building2, Crown, Users, UserPlus, Shield, Trash2, Pencil, Search,
-  ChevronRight, Lock, CheckCircle2, Clock, Ban,
+  ChevronRight, Lock, CheckCircle2, Clock, Ban, Loader2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-store";
 import { ROLE_LABEL, type Role } from "@/lib/rbac";
@@ -10,10 +10,22 @@ import {
   assignableRoles, buildHierarchyTree, canManageRole,
   ROLE_RANK, ROLES_BY_RANK, type HierarchyNode,
 } from "@/lib/role-hierarchy";
-import { useAccounts, type Account } from "@/lib/accounts-store";
 import { useWorkspaceStore } from "@/lib/workspace-store";
 import { AccessDenied } from "@/components/access-denied";
 import { cn } from "@/lib/utils";
+
+function timeAgo(ms: number): string {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+import {
+  useOrgUsers, useCreateUser, useUpdateUser, useDeleteUser, type OrgUser,
+} from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/organizations")({
   head: () => ({ meta: [{ title: "Organization & Accounts — NEXUS" }] }),
@@ -23,16 +35,19 @@ export const Route = createFileRoute("/_app/organizations")({
 function OrganizationPage() {
   const role = useAuth((s) => s.user?.role);
   const me = useAuth((s) => s.user);
-  const accounts = useAccounts((s) => s.accounts);
-  const createAccount = useAccounts((s) => s.createAccount);
-  const updateAccount = useAccounts((s) => s.updateAccount);
-  const deleteAccount = useAccounts((s) => s.deleteAccount);
   const active = useWorkspaceStore((s) => s.getActiveWorkspace());
   const workspaces = useWorkspaceStore((s) => s.workspaces);
 
+  const { data, isLoading, isError } = useOrgUsers();
+  const createUser = useCreateUser();
+  const updateUser = useUpdateUser();
+  const deleteUser = useDeleteUser();
+
+  const accounts: OrgUser[] = data?.items ?? [];
+
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
-  const [editing, setEditing] = useState<Account | null>(null);
+  const [editing, setEditing] = useState<OrgUser | null>(null);
   const [creating, setCreating] = useState(false);
 
   if (!role || (role !== "super_admin" && role !== "security_admin")) {
@@ -44,7 +59,7 @@ function OrganizationPage() {
       if (roleFilter !== "all" && a.role !== roleFilter) return false;
       if (!query.trim()) return true;
       const q = query.toLowerCase();
-      return a.name.toLowerCase().includes(q) || a.email.toLowerCase().includes(q);
+      return (a.name?.toLowerCase().includes(q)) || a.email.toLowerCase().includes(q);
     });
   }, [accounts, query, roleFilter]);
 
@@ -53,7 +68,10 @@ function OrganizationPage() {
       super_admin: 0, security_admin: 0, soc_analyst: 0, threat_hunter: 0,
       incident_responder: 0, compliance_officer: 0, viewer: 0,
     };
-    accounts.forEach((a) => { c[a.role]++; });
+    accounts.forEach((a) => {
+      const r = a.role as Role;
+      if (r in c) c[r]++;
+    });
     return c;
   }, [accounts]);
 
@@ -82,7 +100,7 @@ function OrganizationPage() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Kpi label="Workspaces" value={workspaces.length} icon={Building2} />
         <Kpi label="Members" value={accounts.length} icon={Users} tone="info" />
-        <Kpi label="Invited" value={accounts.filter(a => a.status === "invited").length} icon={Clock} tone="high" />
+        <Kpi label="Pending" value={accounts.filter(a => a.status === "pending").length} icon={Clock} tone="high" />
         <Kpi label="Suspended" value={accounts.filter(a => a.status === "suspended").length} icon={Ban} tone="critical" />
         <Kpi label="Super Admins" value={counts.super_admin} icon={Crown} tone="healthy" />
       </div>
@@ -119,67 +137,77 @@ function OrganizationPage() {
 
           {/* Table */}
           <div className="rounded-lg border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-surface/60 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-                <tr>
-                  <th className="text-left px-3 py-2">Member</th>
-                  <th className="text-left px-3 py-2">Role</th>
-                  <th className="text-left px-3 py-2">Workspace</th>
-                  <th className="text-left px-3 py-2">Status</th>
-                  <th className="text-left px-3 py-2">Last active</th>
-                  <th className="text-right px-3 py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((a) => {
-                  const canManage = canManageRole(role, a.role) && a.id !== me?.id;
-                  return (
-                    <tr key={a.id} className="border-t border-border hover:bg-surface/40">
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2.5">
-                          <div className="grid size-8 place-items-center rounded-full bg-primary/15 text-primary text-xs font-semibold">
-                            {a.name.split(" ").map(p => p[0]).join("").slice(0, 2)}
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+                <Loader2 className="size-4 animate-spin" /> Loading users…
+              </div>
+            ) : isError ? (
+              <div className="py-10 text-center text-sm text-critical">Failed to load users. Please try again.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-surface/60 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2">Member</th>
+                    <th className="text-left px-3 py-2">Role</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Last login</th>
+                    <th className="text-right px-3 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((a) => {
+                    const canManage = canManageRole(role, a.role as Role) && a.id !== me?.id;
+                    return (
+                      <tr key={a.id} className="border-t border-border hover:bg-surface/40">
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="grid size-8 place-items-center rounded-full bg-primary/15 text-primary text-xs font-semibold">
+                              {(a.name ?? a.email).split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{a.name ?? "—"}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">{a.email}</div>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <div className="font-medium truncate">{a.name}</div>
-                            <div className="text-[11px] text-muted-foreground truncate">{a.email}</div>
+                        </td>
+                        <td className="px-3 py-2"><RoleBadge role={(a.role ?? "viewer") as Role} /></td>
+                        <td className="px-3 py-2"><StatusPill status={(a.status ?? "active") as "active" | "pending" | "suspended"} /></td>
+                        <td className="px-3 py-2 text-[11px] text-muted-foreground font-mono">
+                          {a.lastLoginAt ? timeAgo(new Date(a.lastLoginAt).getTime()) : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              disabled={!canManage}
+                              onClick={() => canManage && setEditing(a)}
+                              className="grid size-7 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={canManage ? "Edit" : "Insufficient rank"}
+                            >
+                              {canManage ? <Pencil className="size-3.5" /> : <Lock className="size-3.5" />}
+                            </button>
+                            <button
+                              disabled={!canManage || deleteUser.isPending}
+                              onClick={() => {
+                                if (canManage && confirm(`Delete ${a.name ?? a.email}?`)) {
+                                  deleteUser.mutate(a.id);
+                                }
+                              }}
+                              className="grid size-7 place-items-center rounded-md text-muted-foreground hover:text-critical hover:bg-critical/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={canManage ? "Delete" : "Insufficient rank"}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2"><RoleBadge role={a.role} /></td>
-                      <td className="px-3 py-2 text-muted-foreground">{a.workspace}</td>
-                      <td className="px-3 py-2"><StatusPill status={a.status} /></td>
-                      <td className="px-3 py-2 text-[11px] text-muted-foreground font-mono">
-                        {a.lastActive ? timeAgo(a.lastActive) : "—"}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            disabled={!canManage}
-                            onClick={() => canManage && setEditing(a)}
-                            className="grid size-7 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={canManage ? "Edit" : "Insufficient rank"}
-                          >
-                            {canManage ? <Pencil className="size-3.5" /> : <Lock className="size-3.5" />}
-                          </button>
-                          <button
-                            disabled={!canManage}
-                            onClick={() => canManage && confirm(`Delete ${a.name}?`) && deleteAccount(a.id)}
-                            className="grid size-7 place-items-center rounded-md text-muted-foreground hover:text-critical hover:bg-critical/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={canManage ? "Delete" : "Insufficient rank"}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
-                  <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">No accounts match these filters.</td></tr>
-                )}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={5} className="px-3 py-10 text-center text-sm text-muted-foreground">No accounts match these filters.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
 
@@ -216,14 +244,20 @@ function OrganizationPage() {
           account={editing}
           actorRole={role}
           workspaces={workspaces.map((w) => w.name)}
+          isSaving={createUser.isPending || updateUser.isPending}
           onClose={() => { setCreating(false); setEditing(null); }}
           onSave={(payload) => {
             if (editing) {
-              updateAccount(editing.id, payload);
+              updateUser.mutate(
+                { id: editing.id, fullName: payload.name, role: payload.role, status: payload.status },
+                { onSuccess: () => { setEditing(null); } },
+              );
             } else {
-              createAccount({ ...payload, createdBy: me?.id ?? "system" });
+              createUser.mutate(
+                { email: payload.email, fullName: payload.name, role: payload.role },
+                { onSuccess: () => { setCreating(false); } },
+              );
             }
-            setCreating(false); setEditing(null);
           }}
         />
       )}
@@ -282,20 +316,20 @@ function RoleBadge({ role }: { role: Role }) {
   return (
     <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", tone)}>
       {role === "super_admin" && <Crown className="size-3" />}
-      {ROLE_LABEL[role]}
+      {ROLE_LABEL[role] ?? role}
     </span>
   );
 }
 
-function StatusPill({ status }: { status: Account["status"] }) {
-  const map = {
+function StatusPill({ status }: { status: "active" | "pending" | "suspended" }) {
+  const map: Record<string, { cls: string; icon: React.ElementType }> = {
     active:    { cls: "bg-healthy/15 text-healthy border-healthy/30", icon: CheckCircle2 },
-    invited:   { cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: Clock },
+    pending:   { cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: Clock },
     suspended: { cls: "bg-critical/15 text-critical border-critical/30", icon: Ban },
-  }[status];
-  const Icon = map.icon;
+  };
+  const { cls, icon: Icon } = map[status] ?? map.active;
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", map.cls)}>
+    <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider", cls)}>
       <Icon className="size-3" /> {status}
     </span>
   );
@@ -322,19 +356,19 @@ function HierarchyView({ node, counts, depth = 0 }: { node: HierarchyNode; count
 }
 
 function AccountDialog({
-  account, actorRole, workspaces, onClose, onSave,
+  account, actorRole, workspaces, isSaving, onClose, onSave,
 }: {
-  account: Account | null;
+  account: OrgUser | null;
   actorRole: Role | undefined;
   workspaces: string[];
+  isSaving: boolean;
   onClose: () => void;
-  onSave: (data: Omit<Account, "id" | "createdAt" | "lastActive" | "createdBy">) => void;
+  onSave: (data: { name: string; email: string; role: string; status: string }) => void;
 }) {
   const [name, setName] = useState(account?.name ?? "");
   const [email, setEmail] = useState(account?.email ?? "");
-  const [role, setRole] = useState<Role>(account?.role ?? (assignableRoles(actorRole)[0] ?? "viewer"));
-  const [workspace, setWorkspace] = useState(account?.workspace ?? workspaces[0] ?? "Acme Production");
-  const [status, setStatus] = useState<Account["status"]>(account?.status ?? "invited");
+  const [role, setRole] = useState<string>(account?.role ?? (assignableRoles(actorRole)[0] ?? "viewer"));
+  const [status, setStatus] = useState<string>(account?.status ?? "pending");
 
   const allowedRoles = assignableRoles(actorRole);
 
@@ -355,45 +389,42 @@ function AccountDialog({
             <input value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
           </Field>
           <Field label="Email">
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!account} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-60" />
           </Field>
           <Field label="Role">
-            <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
+            <select value={role} onChange={(e) => setRole(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
               {allowedRoles.map((r) => (
                 <option key={r} value={r}>{ROLE_LABEL[r]} (rank {ROLE_RANK[r]})</option>
               ))}
             </select>
           </Field>
-          <Field label="Workspace">
-            <select value={workspace} onChange={(e) => setWorkspace(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
-              {workspaces.map((w) => <option key={w} value={w}>{w}</option>)}
-              <option value="all">All workspaces</option>
-            </select>
-          </Field>
-          <Field label="Status">
-            <div className="flex gap-1.5">
-              {(["active", "invited", "suspended"] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setStatus(s)}
-                  className={cn(
-                    "flex-1 rounded-md border px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider",
-                    status === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </Field>
+          {account && (
+            <Field label="Status">
+              <div className="flex gap-1.5">
+                {(["active", "pending", "suspended"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setStatus(s)}
+                    className={cn(
+                      "flex-1 rounded-md border px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider",
+                      status === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
         </div>
         <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-md border border-border bg-surface/60 px-3 py-1.5 text-sm hover:bg-surface">Cancel</button>
           <button
-            disabled={!name || !email}
-            onClick={() => onSave({ name, email, role, workspace, status })}
-            className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+            disabled={!name || !email || isSaving}
+            onClick={() => onSave({ name, email, role, status })}
+            className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
           >
+            {isSaving && <Loader2 className="size-3.5 animate-spin" />}
             {account ? "Save changes" : "Create account"}
           </button>
         </div>
@@ -409,12 +440,4 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
-}
-
-function timeAgo(ts: number) {
-  const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
 }

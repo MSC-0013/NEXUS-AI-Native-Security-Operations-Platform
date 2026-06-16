@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { IncidentStatus } from "./mock/types";
+import type { IncidentStatus } from "@nexus/shared";
 
 export interface IncidentNote {
   id: string;

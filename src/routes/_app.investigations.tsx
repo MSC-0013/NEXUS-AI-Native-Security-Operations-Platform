@@ -1,24 +1,24 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { FileSearch, BookOpen, Clock, User, Bot, Link, TriangleAlert as AlertTriangle, Shield, ChevronRight, Eye, Pencil, MessageSquare, Terminal, Globe, Lock, FingerprintPattern as Fingerprint } from "lucide-react";
+﻿import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FileSearch, BookOpen, Clock, User, Bot, Link, TriangleAlert as AlertTriangle, Shield, ChevronRight, Eye, Pencil, MessageSquare, Terminal, Globe, Lock, FingerprintPattern as Fingerprint, Plus, Trash2, Save, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
 import { formatDistanceToNow } from "date-fns";
-import { useInvestigations, useIncidents } from "@/lib/api-hooks";
-import type { Severity } from "@/lib/mock/types";
+import { useInvestigations, useIncidents, useCreateInvestigation, useUpdateInvestigation, useDeleteInvestigation, useInvestigationNotes, useAddInvestigationNote } from "@/lib/api-hooks";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/investigations")({
   head: () => ({
     meta: [
-      { title: "Investigations — NEXUS" },
+      { title: "Investigations â€” NEXUS" },
       { name: "description", content: "SOC investigation workspace with notebooks, evidence timelines, and AI summaries." },
     ],
   }),
   component: InvestigationsPage,
 });
 
-/* ── types ── */
+/* â”€â”€ types â”€â”€ */
 
 type InvStatus = "active" | "suspended" | "closed";
 
@@ -34,7 +34,7 @@ interface Investigation {
   endpoints: { hostname: string; os: string; risk: number; lastSeen: string; indicators: string[] }[];
 }
 
-/* ── constants ── */
+/* â”€â”€ constants â”€â”€ */
 
 const STATUS_STYLE: Record<InvStatus, string> = {
   active: "bg-critical/15 text-critical border-critical/40",
@@ -91,12 +91,12 @@ const INVESTIGATIONS: Investigation[] = [
     linkedAlerts: 7,
     notes: "## Summary\n\nWildcard IAM policy `*:*` attached to `svc-deploy-bot` outside approved change window.\n\n**Timeline**: Policy created at 03:14 UTC by API key `AKIA...F4E2`. No corresponding Terraform PR found.",
     logEntries: [
-      { timestamp: "2026-05-23T03:14:22Z", level: "error", source: "aws-cloudtrail", message: "AttachUserPolicy — wildcard granted", fields: { user: "svc-deploy-bot", policy: "arn:aws:iam::policy/AdminFullAccess" } },
+      { timestamp: "2026-05-23T03:14:22Z", level: "error", source: "aws-cloudtrail", message: "AttachUserPolicy â€” wildcard granted", fields: { user: "svc-deploy-bot", policy: "arn:aws:iam::policy/AdminFullAccess" } },
       { timestamp: "2026-05-23T03:12:01Z", level: "warn", source: "okta", message: "API key authentication from new ASN", fields: { key: "AKIA...F4E2", asn: "AS134023" } },
     ],
     evidence: [
       { at: "2026-05-23T03:14:22Z", actor: "aws-cloudtrail", action: "Detected wildcard policy attachment", detail: "AdminFullAccess attached to svc-deploy-bot", icon: "shield" },
-      { at: "2026-05-23T03:12:01Z", actor: "nexus-ai", action: "Flagged API key from unknown ASN", detail: "AKIA...F4E2 from AS134023 — no prior history", icon: "eye" },
+      { at: "2026-05-23T03:12:01Z", actor: "nexus-ai", action: "Flagged API key from unknown ASN", detail: "AKIA...F4E2 from AS134023 â€” no prior history", icon: "eye" },
     ],
     aiSummary: "NEXUS AI assessment: API key authentication from an unrecognized ASN followed by privilege escalation within 2 minutes suggests compromised key. Recommend immediate key revocation and audit of all actions performed by svc-deploy-bot in the last 24h.",
     collaborativeNotes: [{ id: "cn-4", author: "h.tanaka", at: "2026-05-23T04:00:00Z", body: "Key revoked. Scanning for other resources modified by this key." }],
@@ -122,13 +122,13 @@ const INVESTIGATIONS: Investigation[] = [
     status: "suspended", severity: "high", assignee: "j.okafor", createdAt: d(5), updatedAt: d(1),
     linkedIncidents: [{ code: "INC-1011", title: "C2 beaconing detected from build agent", severity: "high" }],
     linkedAlerts: 5,
-    notes: "Suspended — endpoint isolated, beaconing stopped. Awaiting forensic disk image analysis.",
+    notes: "Suspended â€” endpoint isolated, beaconing stopped. Awaiting forensic disk image analysis.",
     logEntries: [{ timestamp: "2026-05-20T14:32:11Z", level: "error", source: "suricata", message: "DGA-like DNS query pattern", fields: { host: "build-runner-44", domain: "xk9d.svc-upd.xyz" } }],
     evidence: [
       { at: "2026-05-20T14:32:11Z", actor: "suricata", action: "Detected DNS tunneling", detail: "High-entropy subdomain queries at 60s intervals", icon: "terminal" },
       { at: "2026-05-20T15:00:00Z", actor: "j.okafor", action: "Isolated build-runner-44", detail: "EDR containment applied, DNS sinkhole configured", icon: "lock" },
     ],
-    aiSummary: "NEXUS AI assessment: DNS tunneling C2 with 60s beacon interval. Domain generation algorithm matches known Cobalt Strike DNS beacon profile. Endpoint isolated — awaiting forensic analysis before closure.",
+    aiSummary: "NEXUS AI assessment: DNS tunneling C2 with 60s beacon interval. Domain generation algorithm matches known Cobalt Strike DNS beacon profile. Endpoint isolated â€” awaiting forensic analysis before closure.",
     collaborativeNotes: [{ id: "cn-5", author: "j.okafor", at: "2026-05-21T09:00:00Z", body: "Disk image shipped to forensics. Expecting results by EOD Monday." }],
     endpoints: [{ hostname: "build-runner-44", os: "Debian 12", risk: 55, lastSeen: "1d ago", indicators: ["DNS tunnel", "Cobalt Strike beacon"] }],
   },
@@ -137,7 +137,7 @@ const INVESTIGATIONS: Investigation[] = [
     status: "closed", severity: "medium", assignee: "n.patel", createdAt: d(7), updatedAt: d(2),
     linkedIncidents: [{ code: "INC-1002", title: "Credential stuffing campaign against Okta tenant", severity: "medium" }],
     linkedAlerts: 3,
-    notes: "Resolved — MFA enforced org-wide, compromised accounts reset, IP blocklist updated.",
+    notes: "Resolved â€” MFA enforced org-wide, compromised accounts reset, IP blocklist updated.",
     logEntries: [{ timestamp: "2026-05-18T12:05:00Z", level: "warn", source: "okta", message: "Bulk failed logins from proxy IPs", fields: { targeted_users: "38", source_asns: "AS134023, AS42334" } }],
     evidence: [
       { at: "2026-05-18T12:05:00Z", actor: "okta", action: "Detected credential stuffing", detail: "38 targeted users, 2 proxy ASNs", icon: "shield" },
@@ -162,11 +162,11 @@ const INVESTIGATIONS: Investigation[] = [
     status: "suspended", severity: "medium", assignee: "h.tanaka", createdAt: d(4), updatedAt: h(12),
     linkedIncidents: [{ code: "INC-1020", title: "Kubernetes API audit anomaly in payments namespace", severity: "medium" }],
     linkedAlerts: 4,
-    notes: "Suspended — privileged container deployment traced to CI pipeline misconfiguration. Fix deployed, monitoring for recurrence.",
+    notes: "Suspended â€” privileged container deployment traced to CI pipeline misconfiguration. Fix deployed, monitoring for recurrence.",
     logEntries: [{ timestamp: "2026-05-21T16:44:00Z", level: "warn", source: "k8s-audit", message: "Privileged container in payments namespace", fields: { pod: "pay-gateway-7b8f", image: "pay-svc:v2.4.1" } }],
     evidence: [
       { at: "2026-05-21T16:44:00Z", actor: "k8s-audit", action: "Flagged privileged container", detail: "pay-gateway-7b8f running as privileged in payments ns", icon: "terminal" },
-      { at: "2026-05-21T17:30:00Z", actor: "h.tanaka", action: "Traced to CI misconfiguration", detail: "Dockerfile lacked securityContext — fix deployed", icon: "link" },
+      { at: "2026-05-21T17:30:00Z", actor: "h.tanaka", action: "Traced to CI misconfiguration", detail: "Dockerfile lacked securityContext â€” fix deployed", icon: "link" },
     ],
     aiSummary: "NEXUS AI assessment: Privileged container was a CI misconfiguration, not malicious. Fix deployed and Helm chart updated. Monitoring for 48h before closure.",
     collaborativeNotes: [],
@@ -176,7 +176,7 @@ const INVESTIGATIONS: Investigation[] = [
     id: "inv-8", code: "INV-4008", title: "SQL injection probes on customer portal",
     status: "closed", severity: "info", assignee: "amelia.lee", createdAt: d(6), updatedAt: d(3),
     linkedIncidents: [], linkedAlerts: 1,
-    notes: "Closed — WAF rule updated, probes blocked. No data exfiltration confirmed.",
+    notes: "Closed â€” WAF rule updated, probes blocked. No data exfiltration confirmed.",
     logEntries: [{ timestamp: "2026-05-19T11:22:00Z", level: "info", source: "suricata", message: "SQL injection probe blocked by WAF", fields: { path: "/api/v2/users?id=", payload: "' OR 1=1--" } }],
     evidence: [{ at: "2026-05-19T11:22:00Z", actor: "suricata", action: "Blocked SQLi probe", detail: "WAF rule matched on /api/v2/users", icon: "shield" }],
     aiSummary: "NEXUS AI assessment: Automated SQL injection probes from known scanner IP. WAF rules updated to block pattern. No successful exploitation observed. Closed.",
@@ -184,7 +184,7 @@ const INVESTIGATIONS: Investigation[] = [
   },
 ];
 
-/* ── component ── */
+/* â”€â”€ component â”€â”€ */
 
 function InvestigationsPage() {
   const { data: invData, isLoading } = useInvestigations();
@@ -217,22 +217,77 @@ function InvestigationsPage() {
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("preview");
   const sel = investigationsList.find((i) => i.id === effectiveId) ?? investigationsList[0];
 
+  /* â”€â”€ CRUD hooks â”€â”€ */
+  const createInv = useCreateInvestigation();
+  const updateInv = useUpdateInvestigation();
+  const deleteInv = useDeleteInvestigation();
+  const [showNewDialog, setShowNewDialog] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [notesContent, setNotesContent] = useState(investigationsList[0]?.notes ?? "");
+  const notesRef = useRef<HTMLTextAreaElement>(null);
+
+  /* ── collaborative notes (DB-backed) ── */
+  const isApiInvestigation = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(effectiveId);
+  const { data: notesData } = useInvestigationNotes(isApiInvestigation ? effectiveId : undefined);
+  const addNoteMut = useAddInvestigationNote();
+  const [newNote, setNewNote] = useState("");
+
+  const handleAddNote = () => {
+    if (!newNote.trim() || !isApiInvestigation) return;
+    addNoteMut.mutate(
+      { investigationId: effectiveId, body: newNote.trim() },
+      { onSuccess: () => setNewNote("") },
+    );
+  };
+
+  useEffect(() => {
+    setNotesContent(
+      investigationsList.find((i) => i.id === effectiveId)?.notes ?? ""
+    );
+  }, [effectiveId]);
+
+  const handleSaveNotes = () => {
+    if (!sel) return;
+    updateInv.mutate({ id: sel.id, content: notesContent });
+  };
+
+  const handleCreate = () => {
+    if (!newTitle.trim()) return;
+    createInv.mutate(
+      { title: newTitle.trim() },
+      {
+        onSuccess: () => {
+          setNewTitle("");
+          setShowNewDialog(false);
+        },
+      }
+    );
+  };
+
   const activeCt = investigationsList.filter((i) => i.status === "active").length;
   const suspendedCt = investigationsList.filter((i) => i.status === "suspended").length;
   const closedCt = investigationsList.filter((i) => i.status === "closed").length;
   const totalAlerts = alertCount || investigationsList.reduce((s, i) => s + i.linkedAlerts, 0);
 
   if (!sel) {
-    return <div className="p-12 text-center text-muted-foreground">{isLoading ? "Loading…" : "No investigations."}</div>;
+    return <div className="p-12 text-center text-muted-foreground">{isLoading ? "Loadingâ€¦" : "No investigations."}</div>;
   }
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0">
-      {/* left panel — list */}
+      {/* left panel â€” list */}
       <div className="w-full lg:w-[380px] lg:min-w-[380px] border-r border-border bg-surface/40 flex flex-col">
         <div className="p-4 border-b border-border">
           <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Response / Investigations</div>
-          <h1 className="text-xl font-semibold tracking-tight mt-0.5">Investigations</h1>
+          <div className="flex items-center justify-between mt-0.5">
+            <h1 className="text-xl font-semibold tracking-tight">Investigations</h1>
+            <button
+              onClick={() => setShowNewDialog(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-primary hover:bg-primary/20 transition-colors"
+            >
+              <Plus className="size-3" /> New
+            </button>
+          </div>
           <div className="grid grid-cols-4 gap-2 mt-3">
             <MetricCard label="Active" value={activeCt} icon={FileSearch} tone="critical" />
             <MetricCard label="Suspended" value={suspendedCt} icon={Clock} tone="info" />
@@ -243,10 +298,11 @@ function InvestigationsPage() {
 
         <div className="flex-1 overflow-y-auto">
           {investigationsList.map((inv) => (
-            <button key={inv.id} onClick={() => setSelectedId(inv.id)}
-              className={cn("w-full text-left px-4 py-3 border-b border-border/60 transition-colors",
+            <div key={inv.id}
+              className={cn("relative border-b border-border/60 transition-colors group",
                 effectiveId === inv.id ? "bg-surface-2/80 border-l-2 border-l-primary" : "hover:bg-surface-2/40",
               )}>
+              <button onClick={() => setSelectedId(inv.id)} className="w-full text-left px-4 py-3 pr-10">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -265,12 +321,20 @@ function InvestigationsPage() {
               <div className="text-[10px] font-mono text-muted-foreground mt-1">
                 Created {formatDistanceToNow(new Date(inv.createdAt), { addSuffix: true })}
               </div>
-            </button>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${inv.title}"?`)) deleteInv.mutate(inv.id); }}
+                className="absolute right-2 top-2 hidden group-hover:flex items-center justify-center size-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                title="Delete investigation"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
           ))}
         </div>
       </div>
 
-      {/* right panel — detail */}
+      {/* right panel â€” detail */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-6 space-y-5 max-w-[1200px] mx-auto">
           {/* header */}
@@ -296,19 +360,34 @@ function InvestigationsPage() {
             <div className="space-y-5">
               {/* notebook */}
               <Section header="Investigation Notebook" headerRight={
-                <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
-                  {(["edit", "preview"] as const).map((m) => (
-                    <button key={m} onClick={() => setPreviewMode(m)}
-                      className={cn("inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wider",
-                        previewMode === m ? "bg-surface-2 text-foreground" : "text-muted-foreground hover:text-foreground",
-                      )}>
-                      {m === "edit" ? <Pencil className="size-3" /> : <Eye className="size-3" />} {m}
+                <div className="flex items-center gap-2">
+                  {previewMode === "edit" && (
+                    <button
+                      onClick={handleSaveNotes}
+                      disabled={updateInv.isPending}
+                      className="inline-flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-primary hover:bg-primary/20 disabled:opacity-50 transition-colors"
+                    >
+                      <Save className="size-3" />
+                      {updateInv.isPending ? "Savingâ€¦" : "Save"}
                     </button>
-                  ))}
+                  )}
+                  <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
+                    {(["edit", "preview"] as const).map((m) => (
+                      <button key={m} onClick={() => setPreviewMode(m)}
+                        className={cn("inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wider",
+                          previewMode === m ? "bg-surface-2 text-foreground" : "text-muted-foreground hover:text-foreground",
+                        )}>
+                        {m === "edit" ? <Pencil className="size-3" /> : <Eye className="size-3" />} {m}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               }>
                 {previewMode === "edit" ? (
-                  <textarea defaultValue={sel.notes}
+                  <textarea
+                    ref={notesRef}
+                    value={notesContent}
+                    onChange={(e) => setNotesContent(e.target.value)}
                     className="w-full min-h-[200px] bg-transparent p-4 text-sm font-mono leading-relaxed outline-none resize-y placeholder:text-muted-foreground"
                     placeholder="Write investigation notes in markdown..." />
                 ) : (
@@ -414,7 +493,7 @@ function InvestigationsPage() {
                 <div className="p-4 text-sm leading-relaxed text-foreground/90">{sel.aiSummary}</div>
                 <div className="px-4 pb-3 flex items-center gap-2">
                   <Fingerprint className="size-3 text-muted-foreground" />
-                  <span className="text-[10px] font-mono text-muted-foreground">NEXUS AI v2.4 — confidence: high</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">NEXUS AI v2.4 â€” confidence: high</span>
                 </div>
               </section>
 
@@ -444,30 +523,50 @@ function InvestigationsPage() {
                 <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                   <MessageSquare className="size-3.5" /> Collaborative Notes
                 </div>
-                {sel.collaborativeNotes.length === 0 ? (
-                  <div className="px-4 py-4 text-[11px] text-muted-foreground">No notes yet</div>
-                ) : (
-                  <div className="divide-y divide-border/50">
-                    {sel.collaborativeNotes.map((n) => (
-                      <div key={n.id} className="px-4 py-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[11px] font-mono font-medium text-foreground">{n.author}</span>
-                          <span className="text-[10px] font-mono text-muted-foreground">{formatDistanceToNow(new Date(n.at), { addSuffix: true })}</span>
-                          {n.author === "nexus-ai" && (
-                            <span className="inline-flex items-center gap-1 rounded border border-info/30 bg-info/10 px-1 py-0.5 text-[9px] font-mono text-info">
-                              <Bot className="size-2.5" />AI
-                            </span>
-                          )}
+                {(() => {
+                  const apiNotes = notesData?.items ?? [];
+                  const notes = isApiInvestigation
+                    ? apiNotes
+                    : sel.collaborativeNotes.map((n) => ({ id: n.id, author: n.author, at: n.at, body: n.body }));
+                  if (notes.length === 0) {
+                    return <div className="px-4 py-4 text-[11px] text-muted-foreground">No notes yet</div>;
+                  }
+                  return (
+                    <div className="divide-y divide-border/50">
+                      {notes.map((n) => (
+                        <div key={n.id} className="px-4 py-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[11px] font-mono font-medium text-foreground">{n.author}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground">{formatDistanceToNow(new Date(n.at), { addSuffix: true })}</span>
+                            {n.author === "nexus-ai" && (
+                              <span className="inline-flex items-center gap-1 rounded border border-info/30 bg-info/10 px-1 py-0.5 text-[9px] font-mono text-info">
+                                <Bot className="size-2.5" />AI
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs leading-relaxed text-foreground/80">{n.body}</div>
                         </div>
-                        <div className="text-xs leading-relaxed text-foreground/80">{n.body}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  );
+                })()}
                 <div className="px-4 pb-3">
                   <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5">
-                    <input placeholder="Add a note..." className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground" />
-                    <button className="text-[10px] font-mono uppercase tracking-wider text-primary hover:text-foreground transition-colors">Post</button>
+                    <input
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }}
+                      disabled={!isApiInvestigation || addNoteMut.isPending}
+                      placeholder={isApiInvestigation ? "Add a note..." : "Select a saved investigation to add notes"}
+                      className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground disabled:opacity-60"
+                    />
+                    <button
+                      onClick={handleAddNote}
+                      disabled={!isApiInvestigation || !newNote.trim() || addNoteMut.isPending}
+                      className="text-[10px] font-mono uppercase tracking-wider text-primary hover:text-foreground transition-colors disabled:opacity-40"
+                    >
+                      {addNoteMut.isPending ? "Posting…" : "Post"}
+                    </button>
                   </div>
                 </div>
               </section>
@@ -475,11 +574,48 @@ function InvestigationsPage() {
           </div>
         </div>
       </div>
+      {/* New Investigation Dialog */}
+      {showNewDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold">New Investigation</h3>
+              <button onClick={() => setShowNewDialog(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="size-4" />
+              </button>
+            </div>
+            <label className="block text-xs font-mono text-muted-foreground mb-1">Title</label>
+            <input
+              autoFocus
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setShowNewDialog(false); }}
+              placeholder="e.g. Suspicious lateral movement from DC01"
+              className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-primary placeholder:text-muted-foreground"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowNewDialog(false)}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={!newTitle.trim() || createInv.isPending}
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-mono text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              >
+                {createInv.isPending ? "Creatingâ€¦" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ── reusable section wrapper ── */
+/* â”€â”€ reusable section wrapper â”€â”€ */
 
 function Section({ header, headerRight, children }: {
   header: string; headerRight?: React.ReactNode; children: React.ReactNode;
@@ -495,7 +631,7 @@ function Section({ header, headerRight, children }: {
   );
 }
 
-/* ── mini markdown renderer ── */
+/* â”€â”€ mini markdown renderer â”€â”€ */
 
 function MarkdownPreview({ text }: { text: string }) {
   return (
@@ -530,3 +666,4 @@ function inlineMd(text: string) {
     return p;
   });
 }
+

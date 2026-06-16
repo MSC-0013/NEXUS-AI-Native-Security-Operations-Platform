@@ -1,6 +1,6 @@
 import { eq, and, desc, lt, sql, count } from "drizzle-orm";
 import type { DbClient } from "@nexus/db";
-import { alerts } from "@nexus/db/schema";
+import { alerts, incidents, incidentTimeline, incidentRecommendations } from "@nexus/db/schema";
 import type postgres from "postgres";
 import type { AlertListQuery } from "@nexus/shared";
 import { withTenant } from "../../lib/tenant.js";
@@ -64,6 +64,102 @@ export class AlertsService {
         .where(and(eq(alerts.id, id), eq(alerts.organizationId, orgId)))
         .returning();
       return row ? mapAlert(row) : null;
+    });
+  }
+
+  async suppressSimilar(orgId: string, id: string, actorName: string, reason?: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [source] = await this.db
+        .select()
+        .from(alerts)
+        .where(and(eq(alerts.id, id), eq(alerts.organizationId, orgId)))
+        .limit(1);
+
+      if (!source) return null;
+
+      const rows = await this.db
+        .update(alerts)
+        .set({ isSuppressed: true, status: "suppressed", updatedAt: new Date() })
+        .where(and(
+          eq(alerts.organizationId, orgId),
+          eq(alerts.title, source.title),
+          eq(alerts.severity, source.severity),
+        ))
+        .returning();
+
+      return {
+        source: mapAlert(source),
+        suppressedCount: rows.length,
+        reason: reason || `Suppressed similar alerts by ${actorName}`,
+      };
+    });
+  }
+
+  async createIncidentFromAlert(orgId: string, id: string, actorName: string, body?: { title?: string; category?: string }) {
+    return withTenant(this.client, orgId, async () => {
+      const [alert] = await this.db
+        .select()
+        .from(alerts)
+        .where(and(eq(alerts.id, id), eq(alerts.organizationId, orgId)))
+        .limit(1);
+
+      if (!alert) return null;
+
+      const incidentCode = `INC-${Date.now().toString().slice(-6)}`;
+      const [incident] = await this.db.insert(incidents).values({
+        organizationId: orgId,
+        incidentCode,
+        title: body?.title || alert.title,
+        description: alert.description || `Incident opened from alert ${alert.id}`,
+        severity: alert.severity,
+        status: "investigating",
+        category: body?.category || "alert-escalation",
+        affectedAssetsCount: 1,
+        affectedUsersCount: 0,
+        summary: alert.description || `Alert ${alert.title} was escalated for response.`,
+        rootCauseAnalysis: "Pending analyst validation.",
+      }).returning();
+
+      await this.db.insert(incidentTimeline).values({
+        incidentId: incident.id,
+        timestamp: new Date(),
+        actorType: "user",
+        actorName,
+        actionType: "incident_created",
+        description: `Created from alert ${alert.id}`,
+      });
+
+      await this.db.insert(incidentRecommendations).values([
+        {
+          incidentId: incident.id,
+          orderIndex: 1,
+          content: "Validate affected assets and confirm alert fidelity.",
+        },
+        {
+          incidentId: incident.id,
+          orderIndex: 2,
+          content: "Collect related events, endpoint telemetry, and network flows.",
+        },
+        {
+          incidentId: incident.id,
+          orderIndex: 3,
+          content: "Assign response owner and start containment if impact is confirmed.",
+        },
+      ]);
+
+      await this.db
+        .update(alerts)
+        .set({ isEscalated: true, status: "escalated", updatedAt: new Date() })
+        .where(eq(alerts.id, id));
+
+      return {
+        id: incident.id,
+        code: incident.incidentCode,
+        title: incident.title,
+        severity: incident.severity,
+        status: incident.status,
+        openedAt: incident.openedAt?.toISOString(),
+      };
     });
   }
 }

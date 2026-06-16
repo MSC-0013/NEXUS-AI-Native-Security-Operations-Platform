@@ -1,23 +1,25 @@
 import { cn } from "@/lib/utils";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel } from "@nexus/shared";
 
-const STYLES: Record<Severity, string> = {
+const STYLES: Record<SeverityLevel, string> = {
   critical: "bg-critical/15 text-critical border-critical/40",
   high: "bg-high/15 text-high border-high/40",
   medium: "bg-medium/15 text-medium border-medium/40",
+  low: "bg-info/10 text-info border-info/30",
   info: "bg-info/15 text-info border-info/40",
   healthy: "bg-healthy/15 text-healthy border-healthy/40",
 };
 
-const LABEL: Record<Severity, string> = {
+const LABEL: Record<SeverityLevel, string> = {
   critical: "Critical",
   high: "High",
   medium: "Medium",
+  low: "Low",
   info: "Info",
   healthy: "Healthy",
 };
 
-export function SeverityBadge({ severity, className }: { severity: Severity; className?: string }) {
+export function SeverityBadge({ severity, className }: { severity: SeverityLevel; className?: string }) {
   return (
     <span
       className={cn(
@@ -32,11 +34,12 @@ export function SeverityBadge({ severity, className }: { severity: Severity; cla
   );
 }
 
-export function SeverityDot({ severity, className }: { severity: Severity; className?: string }) {
-  const color: Record<Severity, string> = {
+export function SeverityDot({ severity, className }: { severity: SeverityLevel; className?: string }) {
+  const color: Record<SeverityLevel, string> = {
     critical: "bg-critical",
     high: "bg-high",
     medium: "bg-medium",
+    low: "bg-info",
     info: "bg-info",
     healthy: "bg-healthy",
   };

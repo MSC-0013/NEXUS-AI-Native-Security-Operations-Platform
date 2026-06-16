@@ -3,9 +3,10 @@ import { Activity, TriangleAlert as AlertTriangle, Cpu, Network, Wifi, Clock, Za
 import { useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { MetricCard } from "@/components/metric-card";
+import type { MetricPoint } from "@/components/metric-card";
 import { cn } from "@/lib/utils";
 import { usePlatformHealth } from "@/lib/api-hooks";
-import type { MetricPoint } from "@/lib/mock/types";
+import type { SeverityLevel } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/platform-health")({
   head: () => ({
@@ -122,7 +123,7 @@ function ResourceGauge({ label, value, max = 100, unit, series, color }: {
 
 /* ── Main component ────────────────────────────────────────── */
 function flatSeries(value: number, points = 24): MetricPoint[] {
-  return Array.from({ length: points }, (_, i) => ({ t: i, v: value }));
+  return Array.from({ length: points }, (_, i) => ({ h: String(i).padStart(2, "0") + ":00", v: value }));
 }
 
 function PlatformHealthPage() {

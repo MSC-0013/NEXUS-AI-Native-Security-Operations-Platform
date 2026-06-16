@@ -155,10 +155,10 @@ export class DashboardService {
         { label: "Medium", value: sevMap.medium ?? 0, max: 60 },
         { label: "Low", value: sevMap.low ?? 0, max: 80 },
       ],
-      compliance: complianceRes.map((c: { framework: string; score_percent: string; status: string }) => ({
-        framework: c.framework,
-        score: Math.round(parseFloat(c.score_percent || "0")),
-        trend: c.status === "passed" ? "+1" : "0",
+      compliance: complianceRes.map((c) => ({
+        framework: String(c.framework ?? "Unknown"),
+        score: Math.round(parseFloat(String(c.score_percent ?? "0"))),
+        trend: String(c.status ?? "") === "passed" ? "+1" : "0",
       })),
       financial: [
         { metric: "Avg incident cost", value: "$47K", trend: "-12%" },
@@ -173,12 +173,15 @@ export class DashboardService {
         { metric: "Recovery time", target: "<4h", actual: stats.activeIncidents > 5 ? "4.8h" : "3.1h", met: stats.activeIncidents <= 5 },
         { metric: "Postmortem delivery", target: "<48h", actual: "36h", met: true },
       ],
-      attackTrends: attackRes.map((a: { category: string; c: string }) => ({
-        type: a.category || "Unknown",
-        count: parseInt(a.c, 10),
-        change: parseInt(a.c, 10) > 10 ? "+12%" : "-5%",
-        severity: parseInt(a.c, 10) > 20 ? "high" : "medium",
-      })),
+      attackTrends: attackRes.map((a) => {
+        const count = parseInt(String(a.c ?? "0"), 10);
+        return {
+          type: String(a.category ?? "Unknown"),
+          count,
+          change: count > 10 ? "+12%" : "-5%",
+          severity: count > 20 ? "high" : "medium",
+        };
+      }),
     };
   }
 }

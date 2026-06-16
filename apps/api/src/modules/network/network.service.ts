@@ -3,6 +3,7 @@ import type { DbClient } from "@nexus/db";
 import { networkFlows, dnsQueries } from "@nexus/db/schema";
 import type postgres from "postgres";
 import { withTenant } from "../../lib/tenant.js";
+import { NotFoundError } from "../../lib/errors.js";
 
 export class NetworkService {
   constructor(private db: DbClient, private client: postgres.Sql) {}
@@ -52,6 +53,25 @@ export class NetworkService {
         threatCategory: d.threatCategory,
         queriedAt: d.queriedAt?.toISOString(),
       }));
+    });
+  }
+
+  async markFlowMalicious(orgId: string, id: string, isMalicious: boolean, threatCategory?: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [row] = await this.db
+        .update(networkFlows)
+        .set({ isMalicious, threatCategory: threatCategory ?? (isMalicious ? "manually-flagged" : null) })
+        .where(and(eq(networkFlows.id, id), eq(networkFlows.organizationId, orgId)))
+        .returning();
+      if (!row) throw new NotFoundError("Network flow not found");
+
+      return {
+        id: row.id,
+        sourceIp: row.sourceIp,
+        destinationIp: row.destinationIp,
+        isMalicious: row.isMalicious,
+        threatCategory: row.threatCategory,
+      };
     });
   }
 }

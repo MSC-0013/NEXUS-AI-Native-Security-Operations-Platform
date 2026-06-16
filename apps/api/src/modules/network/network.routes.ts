@@ -21,4 +21,16 @@ export async function networkRoutes(app: FastifyInstance) {
     const items = await service.listDns(getUser(request).orgId, limit);
     return reply.send({ items });
   });
+
+  app.patch("/v1/network/flows/:id", {
+    preHandler: authGuard(app.env, "act:incidents"),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      isMalicious: z.boolean(),
+      threatCategory: z.string().optional(),
+    }).parse(request.body);
+    const flow = await service.markFlowMalicious(getUser(request).orgId, id, body.isMalicious, body.threatCategory);
+    return reply.send(flow);
+  });
 }

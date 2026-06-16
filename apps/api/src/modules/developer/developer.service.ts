@@ -1,9 +1,11 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { createHash, randomBytes } from "crypto";
 import type { DbClient } from "@nexus/db";
-import { apiKeys, webhooks } from "@nexus/db/schema";
+import { apiKeys, webhooks, webhookDeliveries } from "@nexus/db/schema";
 import type postgres from "postgres";
 import { withTenant } from "../../lib/tenant.js";
+import { NotFoundError } from "../../lib/errors.js";
+import { safeFetch } from "../../lib/ssrf-guard.js";
 
 export class DeveloperService {
   constructor(private db: DbClient, private client: postgres.Sql) {}
@@ -105,6 +107,105 @@ export class DeveloperService {
       await this.db
         .delete(webhooks)
         .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, orgId)));
+    });
+  }
+
+  async updateWebhook(orgId: string, id: string, data: {
+    name?: string;
+    endpointUrl?: string;
+    subscribedEvents?: string[];
+    isActive?: boolean;
+  }) {
+    return withTenant(this.client, orgId, async () => {
+      const updates: Partial<typeof webhooks.$inferInsert> = { updatedAt: new Date() };
+      if (data.name !== undefined) updates.name = data.name;
+      if (data.endpointUrl !== undefined) updates.endpointUrl = data.endpointUrl;
+      if (data.subscribedEvents !== undefined) updates.subscribedEvents = data.subscribedEvents;
+      if (data.isActive !== undefined) updates.isActive = data.isActive;
+
+      const [row] = await this.db
+        .update(webhooks)
+        .set(updates)
+        .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, orgId)))
+        .returning();
+      if (!row) throw new NotFoundError("Webhook not found");
+      return row;
+    });
+  }
+
+  async testWebhook(orgId: string, id: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [hook] = await this.db
+        .select()
+        .from(webhooks)
+        .where(and(eq(webhooks.id, id), eq(webhooks.organizationId, orgId)))
+        .limit(1);
+      if (!hook) throw new NotFoundError("Webhook not found");
+
+      const payload = { event: "webhook.test", sentAt: new Date().toISOString(), webhookId: hook.id };
+      const start = Date.now();
+      let statusCode = 0;
+      let responseBody = "";
+      try {
+        const resp = await safeFetch(hook.endpointUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Nexus-Event": "webhook.test" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10_000),
+        });
+        statusCode = resp.status;
+        responseBody = await resp.text().catch(() => "");
+      } catch (err) {
+        responseBody = String(err instanceof Error ? err.message : err);
+      }
+      const success = statusCode >= 200 && statusCode < 300;
+      const deliveryTimeMs = Date.now() - start;
+
+      const [delivery] = await this.db.insert(webhookDeliveries).values({
+        webhookId: hook.id,
+        eventType: "webhook.test",
+        payload,
+        responseStatus: statusCode || null,
+        responseBody: responseBody.slice(0, 500),
+        deliveryTimeMs,
+        success,
+      }).returning();
+
+      return {
+        id: delivery.id,
+        success,
+        responseStatus: statusCode || null,
+        responseBody: responseBody.slice(0, 500),
+        deliveryTimeMs,
+      };
+    });
+  }
+
+  async listDeliveries(orgId: string, webhookId: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [hook] = await this.db
+        .select({ id: webhooks.id })
+        .from(webhooks)
+        .where(and(eq(webhooks.id, webhookId), eq(webhooks.organizationId, orgId)))
+        .limit(1);
+      if (!hook) throw new NotFoundError("Webhook not found");
+
+      const rows = await this.db
+        .select()
+        .from(webhookDeliveries)
+        .where(eq(webhookDeliveries.webhookId, webhookId))
+        .orderBy(desc(webhookDeliveries.deliveredAt))
+        .limit(50);
+
+      return rows.map((d) => ({
+        id: d.id,
+        eventType: d.eventType,
+        responseStatus: d.responseStatus,
+        deliveryTimeMs: d.deliveryTimeMs,
+        retryCount: d.retryCount ?? 0,
+        success: d.success ?? false,
+        deliveredAt: d.deliveredAt?.toISOString(),
+      }));
     });
   }
 }

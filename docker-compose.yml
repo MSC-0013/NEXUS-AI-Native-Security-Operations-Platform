@@ -19,6 +19,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: nexus-redis
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
@@ -27,6 +28,24 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: nexus-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nexus
+      MINIO_ROOT_PASSWORD: nexus-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - nexus_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
       retries: 5
 
   api:
@@ -46,7 +65,47 @@ services:
       CORS_ORIGIN: http://localhost:5173,http://localhost:3000,http://localhost:8080
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      CHAT_MODEL: ${CHAT_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CHAT_MODEL: ${CHAT_MODEL:-claude-sonnet-4-6}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-nexus-evidence}
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: nexus
+      S3_SECRET_ACCESS_KEY: nexus-secret
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-dev-webhook-secret}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: nexus-worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://nexus:nexus@postgres:5432/nexus
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production-min-32-chars}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CHAT_MODEL: ${CHAT_MODEL:-claude-sonnet-4-6}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-nexus-evidence}
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: nexus
+      S3_SECRET_ACCESS_KEY: nexus-secret
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,3 +116,4 @@ services:
 volumes:
   nexus_pg_data:
   nexus_redis_data:
+  nexus_minio_data:

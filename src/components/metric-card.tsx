@@ -1,7 +1,11 @@
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
-import type { MetricPoint } from "@/lib/mock/types";
+
+export type MetricPoint = {
+  h: string;
+  v: number;
+};
 
 interface MetricCardProps {
   label: string;

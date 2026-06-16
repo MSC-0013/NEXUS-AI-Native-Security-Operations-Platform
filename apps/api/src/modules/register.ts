@@ -30,6 +30,12 @@ import { integrationsRoutes } from "./integrations/integrations.routes.js";
 import { organizationsRoutes } from "./organizations/organizations.routes.js";
 import { usersRoutes } from "./users/users.routes.js";
 import { detectionRulesRoutes } from "./detection-rules/detection-rules.routes.js";
+import { aiRoutes } from "./ai/ai.routes.js";
+import { suppressionRulesRoutes } from "./alerts/suppression-rules.routes.js";
+import { policiesRoutes } from "./policies/policies.routes.js";
+import { notificationChannelsRoutes } from "./alerts/notification-channels.routes.js";
+import { routingRulesRoutes } from "./alerts/routing-rules.routes.js";
+import { escalationPoliciesRoutes } from "./alerts/escalation-policies.routes.js";
 
 export async function registerApiRoutes(app: FastifyInstance) {
   await app.register(authRoutes);
@@ -63,4 +69,10 @@ export async function registerApiRoutes(app: FastifyInstance) {
   await app.register(organizationsRoutes);
   await app.register(usersRoutes);
   await app.register(detectionRulesRoutes);
+  await app.register(aiRoutes);
+  await app.register(suppressionRulesRoutes);
+  await app.register(policiesRoutes);
+  await app.register(notificationChannelsRoutes);
+  await app.register(routingRulesRoutes);
+  await app.register(escalationPoliciesRoutes);
 }

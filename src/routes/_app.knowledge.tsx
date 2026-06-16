@@ -3,7 +3,7 @@ import { useState, useMemo } from "react";
 import { BookOpen, Search, Tag, Bookmark, FileText, Shield, TriangleAlert as AlertTriangle, Plus, Clock, User, ChevronRight, Skull, Crosshair, ListChecks, FlaskConical, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { useKnowledge } from "@/lib/api-hooks";
+import { useCreateKnowledgeArticle, useKnowledge } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/knowledge")({
   head: () => ({
@@ -119,6 +119,7 @@ const ARTICLES: Article[] = [
 function KnowledgePage() {
   const [query, setQuery] = useState("");
   const { data: knowledgeData, isLoading } = useKnowledge(query || undefined);
+  const createArticle = useCreateKnowledgeArticle();
   const articles: Article[] = useMemo(
     () =>
       (knowledgeData?.items ?? []).map((a) => ({
@@ -139,6 +140,11 @@ function KnowledgePage() {
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [showBookmarked, setShowBookmarked] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("New response runbook");
+  const [draftCategory, setDraftCategory] = useState("Runbooks");
+  const [draftTags, setDraftTags] = useState("runbook,response");
+  const [draftContent, setDraftContent] = useState("## Purpose\nDocument the response workflow.\n\n## Steps\n1. Triage the signal\n2. Gather evidence\n3. Assign owner\n4. Track remediation");
   const effectiveArticleId = selectedArticleId ?? displayArticles[0]?.id ?? "";
 
   const allTags = useMemo(() => {
@@ -266,7 +272,10 @@ function KnowledgePage() {
               </button>
             )}
             <div className="flex-1" />
-            <button className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider text-primary hover:bg-primary/20 transition-colors">
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider text-primary hover:bg-primary/20 transition-colors"
+            >
               <Plus className="size-3.5" /> Create Article
             </button>
           </div>
@@ -400,6 +409,69 @@ function KnowledgePage() {
           </section>
         </div>
       </div>
+      {createOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Knowledge article</div>
+                <h2 className="text-lg font-semibold">Create article</h2>
+              </div>
+              <button onClick={() => setCreateOpen(false)} className="text-muted-foreground hover:text-foreground">close</button>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3">
+              <input
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                placeholder="Article title"
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  value={draftCategory}
+                  onChange={(event) => setDraftCategory(event.target.value)}
+                  className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="Category"
+                />
+                <input
+                  value={draftTags}
+                  onChange={(event) => setDraftTags(event.target.value)}
+                  className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="Tags comma separated"
+                />
+              </div>
+              <textarea
+                value={draftContent}
+                onChange={(event) => setDraftContent(event.target.value)}
+                rows={8}
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring font-mono"
+              />
+              <button
+                onClick={() =>
+                  createArticle.mutate(
+                    {
+                      title: draftTitle.trim(),
+                      category: draftCategory.trim() || "General",
+                      content: draftContent.trim(),
+                      tags: draftTags.split(",").map((tag) => tag.trim()).filter(Boolean),
+                    },
+                    {
+                      onSuccess: (article) => {
+                        setSelectedArticleId(article.id);
+                        setCreateOpen(false);
+                      },
+                    },
+                  )
+                }
+                disabled={createArticle.isPending || !draftTitle.trim() || !draftContent.trim()}
+                className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                Create and publish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

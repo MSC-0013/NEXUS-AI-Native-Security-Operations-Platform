@@ -4,7 +4,7 @@ import { Key, Code, Globe, Zap, Copy, Shield, Check, Trash2, Plus, Eye, EyeOff, 
 import { cn } from "@/lib/utils";
 import { MetricCard } from "@/components/metric-card";
 import { Switch } from "@/components/ui/switch";
-import { useApiKeys, useWebhooks } from "@/lib/api-hooks";
+import { useApiKeys, useCreateApiKey, useCreateWebhook, useDeleteApiKey, useWebhooks } from "@/lib/api-hooks";
 
 export const Route = createFileRoute("/_app/developer")({
   head: () => ({
@@ -107,6 +107,9 @@ const PERMISSION_SCOPES = [
 function DeveloperPage() {
   const { data: keysData, isLoading: keysLoading } = useApiKeys();
   const { data: webhooksData, isLoading: webhooksLoading } = useWebhooks();
+  const createApiKey = useCreateApiKey();
+  const deleteApiKey = useDeleteApiKey();
+  const createWebhook = useCreateWebhook();
   const apiKeys = (keysData?.items ?? []).map((k) => ({
     id: k.id,
     name: k.name,
@@ -114,7 +117,7 @@ function DeveloperPage() {
     permissions: Array.isArray(k.scopes) ? (k.scopes as string[]) : ["read"],
     created: "—",
     lastUsed: "—",
-    status: (k.isActive ? "active" : "revoked") as const,
+    status: (k.isActive ? "active" : "revoked") as "active" | "revoked",
   }));
   const webhooks = (webhooksData?.items ?? []).map((w) => ({
     id: w.id,
@@ -128,6 +131,13 @@ function DeveloperPage() {
   const [copied, setCopied] = useState(false);
   const [webhookStatuses, setWebhookStatuses] = useState<Record<string, boolean>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
+  const [keyModalOpen, setKeyModalOpen] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("Production API key");
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["read"]);
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [webhookName, setWebhookName] = useState("SOC webhook");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(["incident.created"]);
 
   useEffect(() => {
     setWebhookStatuses(Object.fromEntries(webhooks.map((w) => [w.id, w.status])));
@@ -138,6 +148,10 @@ function DeveloperPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+  const toggleKeyScope = (scope: string) =>
+    setNewKeyScopes((prev) => prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]);
+  const toggleWebhookEvent = (event: string) =>
+    setWebhookEvents((prev) => prev.includes(event) ? prev.filter((e) => e !== event) : [...prev, event]);
 
   return (
     <div className="p-6 space-y-8 max-w-[1600px] mx-auto">
@@ -162,7 +176,10 @@ function DeveloperPage() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <SectionHeader icon={Key} title="API Keys" />
-          <button className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">
+          <button
+            onClick={() => { setCreatedKey(null); setKeyModalOpen(true); }}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
             <Plus className="size-3.5" /> Generate Key
           </button>
         </div>
@@ -211,7 +228,11 @@ function DeveloperPage() {
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{key.lastUsed}</td>
                   <td className="px-4 py-3 text-right">
                     {key.status === "active" ? (
-                      <button className="text-muted-foreground hover:text-critical transition-colors">
+                      <button
+                        onClick={() => deleteApiKey.mutate(key.id)}
+                        disabled={deleteApiKey.isPending}
+                        className="text-muted-foreground hover:text-critical transition-colors disabled:opacity-50"
+                      >
                         <Trash2 className="size-3.5" />
                       </button>
                     ) : (
@@ -280,8 +301,18 @@ function DeveloperPage() {
               <div>
                 <label className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground block mb-1">Endpoint URL</label>
                 <input
+                  value={webhookUrl}
+                  onChange={(event) => setWebhookUrl(event.target.value)}
                   type="url"
                   placeholder="https://..."
+                  className="w-full rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground block mb-1">Name</label>
+                <input
+                  value={webhookName}
+                  onChange={(event) => setWebhookName(event.target.value)}
                   className="w-full rounded-md border border-border bg-background/60 px-3 py-1.5 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 />
               </div>
@@ -290,7 +321,12 @@ function DeveloperPage() {
                 <div className="flex flex-wrap gap-1.5">
                   {["incident.created", "incident.escalated", "alert.critical", "alert.high", "asset.changed"].map((ev) => (
                     <label key={ev} className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
-                      <input type="checkbox" className="rounded border-border accent-primary" />
+                      <input
+                        checked={webhookEvents.includes(ev)}
+                        onChange={() => toggleWebhookEvent(ev)}
+                        type="checkbox"
+                        className="rounded border-border accent-primary"
+                      />
                       <span className="font-mono text-muted-foreground">{ev}</span>
                     </label>
                   ))}
@@ -305,7 +341,20 @@ function DeveloperPage() {
                 />
               </div>
             </div>
-            <button className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+            <button
+              onClick={() => {
+                if (!webhookUrl.trim()) return;
+                createWebhook.mutate({
+                  name: webhookName.trim() || "SOC webhook",
+                  endpointUrl: webhookUrl.trim(),
+                  subscribedEvents: webhookEvents.length ? webhookEvents : ["incident.created"],
+                }, {
+                  onSuccess: () => setWebhookUrl(""),
+                });
+              }}
+              disabled={createWebhook.isPending || !webhookUrl.trim()}
+              className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
               Register Webhook
             </button>
           </div>
@@ -449,6 +498,76 @@ function DeveloperPage() {
           </div>
         </section>
       </div>
+      {keyModalOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Developer access</div>
+                <h2 className="text-lg font-semibold">Generate API key</h2>
+              </div>
+              <button onClick={() => setKeyModalOpen(false)} className="text-muted-foreground hover:text-foreground">close</button>
+            </div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground block mb-1">Key name</label>
+                <input
+                  value={newKeyName}
+                  onChange={(event) => setNewKeyName(event.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-2">Scopes</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {PERMISSION_SCOPES.map((perm) => (
+                    <label key={perm.scope} className="flex items-start gap-2 rounded-md border border-border bg-background/60 p-2 text-xs">
+                      <input
+                        checked={newKeyScopes.includes(perm.scope)}
+                        onChange={() => toggleKeyScope(perm.scope)}
+                        type="checkbox"
+                        className="mt-0.5 accent-primary"
+                      />
+                      <span>
+                        <span className="block font-mono uppercase">{perm.scope}</span>
+                        <span className="text-muted-foreground">{perm.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {createdKey && (
+                <div className="rounded-md border border-healthy/40 bg-healthy/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wider font-mono text-healthy">Copy this key now</div>
+                  <div className="mt-2 flex items-center gap-2 rounded border border-border bg-background px-2 py-1.5 font-mono text-xs">
+                    <span className="truncate">{createdKey}</span>
+                    <button onClick={() => handleCopy(createdKey)} className="ml-auto text-muted-foreground hover:text-foreground">
+                      <Copy className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setKeyModalOpen(false)} className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground">
+                  Cancel
+                </button>
+                <button
+                  onClick={() =>
+                    createApiKey.mutate(
+                      { name: newKeyName.trim() || "API key", scopes: newKeyScopes.length ? newKeyScopes : ["read"] },
+                      { onSuccess: (result) => setCreatedKey(result.key) },
+                    )
+                  }
+                  disabled={createApiKey.isPending}
+                  className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  Generate key
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

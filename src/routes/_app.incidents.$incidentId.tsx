@@ -1,14 +1,18 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowLeft, MessageSquare, ShieldAlert, Star, User, Clock, TriangleAlert as AlertTriangle, ChevronUp, FileText, CircleCheck as CheckCircle2, Circle, Loader as Loader2, Circle as XCircle, Paperclip, Network, Monitor, File as FileIcon, Globe, Send } from "lucide-react";
+import { ArrowLeft, MessageSquare, ShieldAlert, Star, User, Clock, TriangleAlert as AlertTriangle, ChevronUp, FileText, CircleCheck as CheckCircle2, Circle, Loader as Loader2, Circle as XCircle, Paperclip, Network, Monitor, File as FileIcon, Globe, Send, Notebook } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { useIncident, useIncidentEvidence, useIncidentComments } from "@/lib/api-hooks";
+import {
+  useAddIncidentComment, useIncident, useIncidentEvidence, useIncidentComments,
+  useUpdateIncidentStatus, useEscalateIncident, useGeneratePostmortem, useUpdateIncidentRca,
+  useOpenIncidentInvestigation,
+} from "@/lib/api-hooks";
 import type { IncidentDto } from "@nexus/shared";
 import { SeverityBadge } from "@/components/severity-badge";
 import { formatDistanceToNow, differenceInMinutes, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
-import type { Incident, IncidentStatus, Severity } from "@/lib/mock/types";
+import type { SeverityLevel } from "@nexus/shared";
 import { useIncidentStore } from "@/lib/incident-store";
 import { useAuth } from "@/lib/auth-store";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,12 +30,43 @@ export const Route = createFileRoute("/_app/incidents/$incidentId")({
   component: IncidentDetailPage,
 });
 
+type IncidentStatus = "open" | "investigating" | "contained" | "eradicated" | "recovered" | "closed" | "resolved";
+
+type Severity = SeverityLevel;
+
+interface Incident {
+  id: string;
+  code: string;
+  title: string;
+  severity: SeverityLevel;
+  status: IncidentStatus;
+  assignee: string;
+  openedAt: string;
+  updatedAt: string;
+  affectedAssets: number;
+  affectedUsers: number;
+  category: string;
+  mitre: string[];
+  summary: string;
+  timeline: { at: string; actor: string; action: string; detail?: string }[];
+  rca: string;
+  recommendations: string[];
+  linkedEventIds: string[];
+  sla?: { targetMinutes: number; startedAt: string; escalationAt: number } | null;
+  responders?: { name: string; role: string; joinedAt: string }[];
+  escalations?: { from: string; to: string; reason: string; at: string; by: string }[];
+  remediations?: { id: string; title: string; assignee: string; status: string; dueDate: string }[];
+}
+
 const STATUSES: IncidentStatus[] = ["open", "investigating", "contained", "resolved"];
 
 const STATUS_STYLE: Record<IncidentStatus, string> = {
   open: "bg-critical/15 text-critical border-critical/40",
   investigating: "bg-high/15 text-high border-high/40",
   contained: "bg-info/15 text-info border-info/40",
+  eradicated: "bg-info/15 text-info border-info/40",
+  recovered: "bg-healthy/15 text-healthy border-healthy/40",
+  closed: "bg-healthy/15 text-healthy border-healthy/40",
   resolved: "bg-healthy/15 text-healthy border-healthy/40",
 };
 
@@ -148,14 +183,19 @@ function dtoToIncident(d: IncidentDto): Incident {
     rca: d.rca ?? "",
     recommendations: d.recommendations,
     linkedEventIds: d.linkedEventIds,
+    sla: d.sla,
+    responders: d.responders,
+    escalations: d.escalations as Incident["escalations"],
+    remediations: d.remediations,
   };
 }
 
 function IncidentDetailPage() {
   const { incidentId } = Route.useParams();
   const { data: apiIncident } = useIncident(incidentId);
-  const { data: evidenceData } = useIncidentEvidence(incidentId);
-  const { data: commentsData } = useIncidentComments(incidentId);
+  const detailIncidentId = apiIncident?.id ?? incidentId;
+  const { data: evidenceData } = useIncidentEvidence(detailIncidentId);
+  const { data: commentsData } = useIncidentComments(detailIncidentId);
   const evidenceItems = (evidenceData?.items ?? []).map((ev) => ({
     id: ev.id,
     type: mapEvidenceType(ev.type),
@@ -176,13 +216,20 @@ function IncidentDetailPage() {
   const setAssignee = useIncidentStore((s) => s.setAssignee);
   const addNote = useIncidentStore((s) => s.addNote);
   const toggleStar = useIncidentStore((s) => s.toggleStar);
+  const updateStatus = useUpdateIncidentStatus();
+  const addComment = useAddIncidentComment();
+  const escalateIncident = useEscalateIncident();
+  const generatePostmortem = useGeneratePostmortem();
+  const updateRca = useUpdateIncidentRca();
+  const openInvestigation = useOpenIncidentInvestigation();
+  const navigate = useNavigate();
   const me = useAuth((s) => s.user);
   const [note, setNote] = useState("");
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState("");
   const [rcaStep, setRcaStep] = useState<RCAStep>("analyze");
   const [commsMsg, setCommsMsg] = useState("");
-  const [postmortemGenerated, setPostmortemGenerated] = useState(false);
+  const [postmortemTemplate, setPostmortemTemplate] = useState<{ sections: { title: string; content: string }[] } | null>(null);
 
   if (!base) {
     return (
@@ -200,25 +247,40 @@ function IncidentDetailPage() {
 
   const onPostNote = () => {
     if (!note.trim()) return;
-    addNote(incidentId, me?.name ?? "analyst", note.trim());
+    if (apiIncident?.id) {
+      addComment.mutate({ incidentId: detailIncidentId, content: note.trim() });
+    } else {
+      addNote(incidentId, me?.name ?? "analyst", note.trim());
+    }
     setNote("");
   };
 
+  const onOpenInvestigation = () => {
+    if (!apiIncident?.id) return;
+    openInvestigation.mutate(apiIncident.id, {
+      onSuccess: () => navigate({ to: "/investigations" }),
+    });
+  };
+
   // SLA calculations
-  const slaStart = new Date(MOCK_SLA.startedAt);
+  const sla = i.sla ?? MOCK_SLA;
+  const responders = i.responders ?? MOCK_RESPONDERS;
+  const escalations = i.escalations ?? MOCK_ESCALATIONS;
+  const remediations = i.remediations ?? MOCK_REMEDIATIONS;
+  const slaStart = new Date(sla.startedAt);
   const now = new Date();
   const elapsedMin = differenceInMinutes(now, slaStart);
-  const slaPercent = Math.min(100, (elapsedMin / MOCK_SLA.targetMinutes) * 100);
-  const remainingMin = Math.max(0, MOCK_SLA.targetMinutes - elapsedMin);
-  const breached = elapsedMin >= MOCK_SLA.targetMinutes;
-  const escalationTriggered = elapsedMin >= MOCK_SLA.escalationAt;
+  const slaPercent = Math.min(100, (elapsedMin / sla.targetMinutes) * 100);
+  const remainingMin = Math.max(0, sla.targetMinutes - elapsedMin);
+  const breached = elapsedMin >= sla.targetMinutes;
+  const escalationTriggered = elapsedMin >= sla.escalationAt;
 
   // RCA progress
   const rcaPercent = ((RCA_STEP_INDEX[rcaStep] + 1) / RCA_STEPS.length) * 100;
 
   // Remediation progress
-  const remComplete = MOCK_REMEDIATIONS.filter((r) => r.status === "complete").length;
-  const remPercent = (remComplete / MOCK_REMEDIATIONS.length) * 100;
+  const remComplete = remediations.filter((r) => r.status === "complete").length;
+  const remPercent = remediations.length ? (remComplete / remediations.length) * 100 : 0;
 
   return (
     <div className="p-6 space-y-5 max-w-[1500px] mx-auto">
@@ -257,7 +319,10 @@ function IncidentDetailPage() {
             {STATUSES.map((s) => (
               <button
                 key={s}
-                onClick={() => setStatus(incidentId, s)}
+                onClick={() => {
+                  if (apiIncident?.id) updateStatus.mutate({ id: apiIncident.id, status: s as string });
+                  setStatus(incidentId, s as import("@nexus/shared").IncidentStatus);
+                }}
                 className={cn(
                   "px-2.5 py-1.5 text-[11px] font-mono uppercase tracking-wider",
                   i.status === s
@@ -269,6 +334,15 @@ function IncidentDetailPage() {
               </button>
             ))}
           </div>
+          <button
+            onClick={onOpenInvestigation}
+            disabled={!apiIncident?.id || openInvestigation.isPending}
+            title={apiIncident?.id ? undefined : "Investigation available once the incident is persisted"}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            <Notebook className="size-3.5" />
+            {openInvestigation.isPending ? "Opening…" : "Open Full Investigation"}
+          </button>
         </div>
       </div>
 
@@ -315,7 +389,12 @@ function IncidentDetailPage() {
                 />
                 <button
                   disabled={!commsMsg.trim()}
-                  onClick={() => { if (commsMsg.trim()) { setCommsMsg(""); } }}
+                  onClick={() => {
+                    if (commsMsg.trim()) {
+                      addComment.mutate({ incidentId: detailIncidentId, content: commsMsg.trim() });
+                      setCommsMsg("");
+                    }
+                  }}
                   className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
                 >
                   <Send className="size-3.5" /> Send
@@ -355,7 +434,12 @@ function IncidentDetailPage() {
                   return (
                     <button
                       key={step.key}
-                      onClick={() => setRcaStep(step.key)}
+                      onClick={() => {
+                        setRcaStep(step.key);
+                        if (apiIncident?.id) {
+                          updateRca.mutate({ incidentId: detailIncidentId, step: step.key });
+                        }
+                      }}
                       className={cn(
                         "flex-1 rounded-md border px-2 py-1.5 text-[11px] font-mono uppercase tracking-wider text-center transition-colors",
                         active && "border-primary bg-primary/15 text-primary",
@@ -379,16 +463,16 @@ function IncidentDetailPage() {
           </Panel>
 
           {/* --- Remediation Tracking --- */}
-          <Panel title="Remediation Tracking" subtitle={`${remComplete}/${MOCK_REMEDIATIONS.length} complete`}>
+          <Panel title="Remediation Tracking" subtitle={`${remComplete}/${remediations.length} complete`}>
             <div className="space-y-3">
               <Progress value={remPercent} className="h-2" />
               <ul className="space-y-2">
-                {MOCK_REMEDIATIONS.map((rem) => {
-                  const Icon = REMEDIATION_ICONS[rem.status];
+                {remediations.map((rem) => {
+                  const Icon = REMEDIATION_ICONS[rem.status as RemediationStatus];
                   const overdue = rem.status !== "complete" && new Date(rem.dueDate) < now;
                   return (
                     <li key={rem.id} className="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-2">
-                      <Icon className={cn("size-4 shrink-0", REMEDIATION_COLORS[rem.status], rem.status === "in_progress" && "animate-spin")} />
+                      <Icon className={cn("size-4 shrink-0", REMEDIATION_COLORS[rem.status as RemediationStatus], rem.status === "in_progress" && "animate-spin")} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm">{rem.title}</div>
                         <div className="text-[11px] font-mono text-muted-foreground">
@@ -465,7 +549,7 @@ function IncidentDetailPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">response target</span>
-                <span className="text-[13px] font-mono tabular-nums">{MOCK_SLA.targetMinutes}m</span>
+                <span className="text-[13px] font-mono tabular-nums">{sla.targetMinutes}m</span>
               </div>
               <Progress
                 value={slaPercent}
@@ -484,7 +568,7 @@ function IncidentDetailPage() {
               {escalationTriggered && !breached && (
                 <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-400">
                   <AlertTriangle className="size-3.5 shrink-0" />
-                  <span>Escalation threshold reached at {MOCK_SLA.escalationAt}m</span>
+                  <span>Escalation threshold reached at {sla.escalationAt}m</span>
                 </div>
               )}
               {breached && (
@@ -497,9 +581,9 @@ function IncidentDetailPage() {
           </Panel>
 
           {/* --- Responder Assignment --- */}
-          <Panel title="Responder Assignment" subtitle={`${MOCK_RESPONDERS.length} responders`}>
+          <Panel title="Responder Assignment" subtitle={`${responders.length} responders`}>
             <ul className="space-y-2">
-              {MOCK_RESPONDERS.map((r) => (
+              {responders.map((r) => (
                 <li key={r.name} className="flex items-center gap-2">
                   <div className="grid size-7 place-items-center rounded-full bg-primary/20 text-primary text-xs font-semibold shrink-0">
                     {r.name.slice(0, 1).toUpperCase()}
@@ -510,7 +594,7 @@ function IncidentDetailPage() {
                       joined {formatDistanceToNow(new Date(r.joinedAt), { addSuffix: true })}
                     </div>
                   </div>
-                  <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider shrink-0", ROLE_STYLES[r.role])}>
+                  <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider shrink-0", ROLE_STYLES[r.role as ResponderRole])}>
                     {r.role}
                   </span>
                 </li>
@@ -519,16 +603,16 @@ function IncidentDetailPage() {
           </Panel>
 
           {/* --- Severity Escalation --- */}
-          <Panel title="Severity Escalation" subtitle={`${MOCK_ESCALATIONS.length} escalations`}>
+          <Panel title="Severity Escalation" subtitle={`${escalations.length} escalations`}>
             <div className="space-y-3">
-              {MOCK_ESCALATIONS.map((esc, idx) => (
+              {escalations.map((esc, idx) => (
                 <div key={idx} className="flex items-start gap-2 rounded-md border border-border bg-background p-2.5">
                   <ChevronUp className="size-4 text-critical shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <SeverityBadge severity={esc.from} className="text-[9px] px-1 py-0" />
+                      <SeverityBadge severity={esc.from as SeverityLevel} className="text-[9px] px-1 py-0" />
                       <span className="text-[10px] text-muted-foreground">&rarr;</span>
-                      <SeverityBadge severity={esc.to} className="text-[9px] px-1 py-0" />
+                      <SeverityBadge severity={esc.to as SeverityLevel} className="text-[9px] px-1 py-0" />
                     </div>
                     <div className="mt-1 text-[12px]">{esc.reason}</div>
                     <div className="text-[10px] font-mono text-muted-foreground">
@@ -553,10 +637,17 @@ function IncidentDetailPage() {
                     rows={2}
                   />
                   <button
-                    disabled={!escalateReason.trim()}
-                    onClick={() => { setEscalateOpen(false); setEscalateReason(""); }}
-                    className="w-full rounded-md bg-critical px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                    disabled={!escalateReason.trim() || escalateIncident.isPending}
+                    onClick={() => {
+                      if (!escalateReason.trim()) return;
+                      escalateIncident.mutate(
+                        { incidentId: detailIncidentId, reason: escalateReason },
+                        { onSuccess: () => { setEscalateOpen(false); setEscalateReason(""); } },
+                      );
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-critical px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
                   >
+                    {escalateIncident.isPending && <Loader2 className="size-3.5 animate-spin" />}
                     Confirm Escalation
                   </button>
                 </div>
@@ -629,23 +720,28 @@ function IncidentDetailPage() {
                 </div>
               )}
               <button
-                onClick={() => setPostmortemGenerated(true)}
-                className="w-full flex items-center justify-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20"
+                disabled={generatePostmortem.isPending}
+                onClick={() => {
+                  generatePostmortem.mutate(detailIncidentId, {
+                    onSuccess: (data) => setPostmortemTemplate(data),
+                  });
+                }}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
               >
-                <FileText className="size-3.5" /> Generate Postmortem
+                {generatePostmortem.isPending
+                  ? <><Loader2 className="size-3.5 animate-spin" /> Generating…</>
+                  : <><FileText className="size-3.5" /> Generate Postmortem</>
+                }
               </button>
-              {postmortemGenerated && (
+              {postmortemTemplate && (
                 <div className="space-y-2 rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-[12px]">
                   <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
                     <CheckCircle2 className="size-3.5" /> Template generated
                   </div>
                   <ul className="space-y-1 text-muted-foreground">
-                    <li>1. Incident summary &amp; timeline</li>
-                    <li>2. Root cause analysis</li>
-                    <li>3. Impact assessment</li>
-                    <li>4. Detection &amp; response evaluation</li>
-                    <li>5. Remediation actions taken</li>
-                    <li>6. Lessons learned &amp; action items</li>
+                    {postmortemTemplate.sections.map((s, idx) => (
+                      <li key={idx}>{idx + 1}. {s.title}</li>
+                    ))}
                   </ul>
                 </div>
               )}
@@ -657,26 +753,40 @@ function IncidentDetailPage() {
   );
 }
 
-function Panel({ title, subtitle, icon: Icon, children }: { title: string; subtitle?: string; icon?: LucideIcon; children: React.ReactNode }) {
+/* ─── Panel component ─── */
+function Panel({
+  title,
+  subtitle,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: LucideIcon;
+  children: React.ReactNode;
+}) {
   return (
     <section className="rounded-lg border border-border bg-surface/60">
-      <header className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          {Icon && <Icon className="size-3.5 text-primary" />}
-          <h3 className="text-sm font-medium">{title}</h3>
-        </div>
-        {subtitle && <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{subtitle}</span>}
-      </header>
-      <div className="p-4 space-y-2">{children}</div>
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
+        {Icon && <Icon className="size-3.5 text-muted-foreground shrink-0" />}
+        <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex-1">
+          {title}
+        </span>
+        {subtitle && (
+          <span className="text-[10px] font-mono text-muted-foreground/70">{subtitle}</span>
+        )}
+      </div>
+      <div>{children}</div>
     </section>
   );
 }
 
+/* ─── KV row ─── */
 function KV({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">{k}</span>
-      <span className="text-[13px]">{v}</span>
+    <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border/40 last:border-0">
+      <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground w-28 shrink-0">{k}</span>
+      <span className="text-xs truncate">{v}</span>
     </div>
   );
 }

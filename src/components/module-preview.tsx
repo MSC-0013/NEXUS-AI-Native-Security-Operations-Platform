@@ -2,9 +2,20 @@ import { MetricCard } from "@/components/metric-card";
 import { SeverityBadge } from "@/components/severity-badge";
 import { WorkspaceContext } from "@/components/workspace-context";
 import { cn } from "@/lib/utils";
-import { makeMetricSeries } from "@/lib/mock/generators";
 import type { LucideIcon } from "lucide-react";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel } from "@nexus/shared";
+import type { MetricPoint } from "@/components/metric-card";
+
+// Helper to generate metric series data
+function makeMetricSeries(count: number, base: number, variance: number): MetricPoint[] {
+  const now = new Date();
+  return Array.from({ length: count }, (_, i) => {
+    const t = new Date(now.getTime() - (count - 1 - i) * 60_000);
+    const h = t.toISOString().slice(11, 16);
+    const v = Math.max(0, base + (Math.random() - 0.5) * variance * 2);
+    return { h, v };
+  });
+}
 
 export interface ModuleKPI {
   label: string;
@@ -17,7 +28,7 @@ export interface ModuleKPI {
 
 export interface ModuleRow {
   cells: (string | number)[];
-  severity?: Severity;
+  severity?: SeverityLevel;
 }
 
 export interface ModulePreviewProps {

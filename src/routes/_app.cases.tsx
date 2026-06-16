@@ -1,25 +1,24 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Briefcase, Clock, CircleCheck as CheckCircle, TriangleAlert as AlertTriangle, User, Link, Shield, ChevronRight, FileText, Activity, ListChecks, Gavel, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { MetricCard } from "@/components/metric-card";
-import { formatDistanceToNow } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useCases } from "@/lib/api-hooks";
-import type { Severity } from "@/lib/mock/types";
+import { useCases, useUpdateCase, useOrgUsers } from "@/lib/api-hooks";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/cases")({
   head: () => ({
     meta: [
-      { title: "Cases — NEXUS" },
+      { title: "Cases â€” NEXUS" },
       { name: "description", content: "Case management with response workflows, evidence tracking, and SLA monitoring." },
     ],
   }),
   component: CasesPage,
 });
 
-/* ── types ── */
+/* â”€â”€ types â”€â”€ */
 
 type CaseStatus = "open" | "in_progress" | "review" | "closed";
 type WorkflowStep = "triage" | "analyze" | "contain" | "remediate" | "close";
@@ -31,6 +30,7 @@ interface CaseData {
   severity: Severity;
   status: CaseStatus;
   assignee: string;
+  ownerId?: string | null;
   createdAt: string;
   updatedAt: string;
   slaDeadline: string;
@@ -44,7 +44,7 @@ interface CaseData {
   remediationChecklist: { id: string; label: string; done: boolean }[];
 }
 
-/* ── constants ── */
+/* â”€â”€ constants â”€â”€ */
 
 const STATUS_STYLE: Record<CaseStatus, string> = {
   open: "bg-critical/15 text-critical border-critical/40",
@@ -55,6 +55,22 @@ const STATUS_STYLE: Record<CaseStatus, string> = {
 
 const WORKFLOW_STEPS: WorkflowStep[] = ["triage", "analyze", "contain", "remediate", "close"];
 
+// Map persisted case status <-> visual workflow step so the workflow always
+// reflects (and drives) the real database status.
+const STATUS_TO_STEP: Record<CaseStatus, WorkflowStep> = {
+  open: "triage",
+  in_progress: "analyze",
+  review: "remediate",
+  closed: "close",
+};
+const STEP_TO_STATUS: Record<WorkflowStep, CaseStatus> = {
+  triage: "open",
+  analyze: "in_progress",
+  contain: "in_progress",
+  remediate: "review",
+  close: "closed",
+};
+
 const WORKFLOW_STYLE: Record<WorkflowStep, string> = {
   triage: "text-critical",
   analyze: "text-high",
@@ -63,11 +79,10 @@ const WORKFLOW_STYLE: Record<WorkflowStep, string> = {
   close: "text-healthy",
 };
 
-const d = (days: number) => new Date(Date.now() - 86400000 * days).toISOString();
-const h = (hours: number) => new Date(Date.now() - 3600000 * hours).toISOString();
-const hFuture = (hours: number) => new Date(Date.now() + 3600000 * hours).toISOString();
-
-const ASSIGNEES = ["amelia.lee", "h.tanaka", "j.okafor", "marco.cruz", "n.patel", "s.ivanov"];
+const CASE_CLOCK_MS = Date.parse("2026-06-03T03:00:00.000Z");
+const d = (days: number) => new Date(CASE_CLOCK_MS - 86400000 * days).toISOString();
+const h = (hours: number) => new Date(CASE_CLOCK_MS - 3600000 * hours).toISOString();
+const hFuture = (hours: number) => new Date(CASE_CLOCK_MS + 3600000 * hours).toISOString();
 
 const CASES: CaseData[] = [
   {
@@ -85,7 +100,7 @@ const CASES: CaseData[] = [
     activityFeed: [
       { at: h(0.5), actor: "amelia.lee", action: "Isolated dc-01 from network", detail: "EDR containment policy applied" },
       { at: h(1), actor: "nexus-ai", action: "Correlated GPO change with ransomware IOCs", detail: "T1486 pattern match, 92% confidence" },
-      { at: h(2), actor: "edr-falconlite", action: "Detected GPO modification", detail: "Event 5136 — new scheduled task deployed" },
+      { at: h(2), actor: "edr-falconlite", action: "Detected GPO modification", detail: "Event 5136 â€” new scheduled task deployed" },
       { at: h(3), actor: "amelia.lee", action: "Escalated to case", detail: "Promoted from alert ALR-3012" },
     ],
     remediationChecklist: [
@@ -104,11 +119,11 @@ const CASES: CaseData[] = [
     linkedIncidents: [{ code: "INC-1015", title: "Privileged IAM role outside change window", severity: "high" }],
     endpoints: [{ hostname: "build-runner-44", os: "Debian 12", lastSeen: "15m ago" }],
     evidence: [
-      { type: "log", source: "aws-cloudtrail", timestamp: h(3), description: "AttachUserPolicy — AdminFullAccess granted" },
+      { type: "log", source: "aws-cloudtrail", timestamp: h(3), description: "AttachUserPolicy â€” AdminFullAccess granted" },
       { type: "log", source: "okta", timestamp: h(3.5), description: "API key auth from unknown ASN AS134023" },
     ],
     activityFeed: [
-      { at: h(2), actor: "h.tanaka", action: "Revoked API key AKIA...F4E2", detail: "Key had no MFA — revoked immediately" },
+      { at: h(2), actor: "h.tanaka", action: "Revoked API key AKIA...F4E2", detail: "Key had no MFA â€” revoked immediately" },
       { at: h(3), actor: "nexus-ai", action: "Flagged privilege escalation", detail: "2-minute window between auth and policy attach" },
     ],
     remediationChecklist: [
@@ -164,7 +179,7 @@ const CASES: CaseData[] = [
     endpoints: [],
     evidence: [{ type: "log", source: "okta", timestamp: d(7), description: "38 targeted users, 2 proxy ASNs" }],
     activityFeed: [
-      { at: d(2), actor: "n.patel", action: "Closed case — MFA at 100%", detail: "All compromised accounts reset" },
+      { at: d(2), actor: "n.patel", action: "Closed case â€” MFA at 100%", detail: "All compromised accounts reset" },
       { at: d(4), actor: "n.patel", action: "Enforced MFA org-wide", detail: "FIDO2 required for admin+privileged" },
     ],
     remediationChecklist: [
@@ -176,7 +191,7 @@ const CASES: CaseData[] = [
   {
     id: "case-6", code: "CASE-7006", title: "Impossible travel for executive account", severity: "medium", status: "open",
     assignee: "s.ivanov", createdAt: h(6), updatedAt: h(1), slaDeadline: hFuture(8), slaBreached: false, workflowStep: "triage",
-    linkedAlerts: [{ code: "ALR-3045", title: "Impossible travel — NYC/Lagos 9min", severity: "medium" }], linkedIncidents: [],
+    linkedAlerts: [{ code: "ALR-3045", title: "Impossible travel â€” NYC/Lagos 9min", severity: "medium" }], linkedIncidents: [],
     endpoints: [], evidence: [{ type: "log", source: "okta", timestamp: h(6), description: "c.eo auth from NYC and Lagos within 9 min" }],
     activityFeed: [
       { at: h(1), actor: "s.ivanov", action: "Revoked Lagos session tokens", detail: "Pre-emptive revocation" },
@@ -209,7 +224,7 @@ const CASES: CaseData[] = [
     assignee: "amelia.lee", createdAt: d(6), updatedAt: d(3), slaDeadline: d(4), slaBreached: false, workflowStep: "close",
     linkedAlerts: [{ code: "ALR-3055", title: "SQLi probe blocked by WAF", severity: "info" }], linkedIncidents: [],
     endpoints: [], evidence: [{ type: "log", source: "suricata", timestamp: d(6), description: "WAF rule matched on /api/v2/users" }],
-    activityFeed: [{ at: d(3), actor: "amelia.lee", action: "Closed — no exfiltration", detail: "WAF rule updated" }],
+    activityFeed: [{ at: d(3), actor: "amelia.lee", action: "Closed â€” no exfiltration", detail: "WAF rule updated" }],
     remediationChecklist: [
       { id: "rc-27", label: "Update WAF rules for SQLi pattern", done: true },
       { id: "rc-28", label: "Confirm no data exfiltration", done: true },
@@ -251,13 +266,31 @@ const CASES: CaseData[] = [
   },
 ];
 
-/* ── component ── */
+/* â”€â”€ component â”€â”€ */
 
 function mapCaseStatus(s: string): CaseStatus {
   if (s === "in_progress" || s === "investigating") return "in_progress";
   if (s === "review" || s === "pending_review") return "review";
   if (s === "closed" || s === "resolved") return "closed";
   return "open";
+}
+
+function formatCaseDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function formatCaseAge(value: string) {
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return "Unknown";
+  const diff = Math.max(0, CASE_CLOCK_MS - time);
+  const days = Math.floor(diff / 86400000);
+  if (days > 0) return `${days}d ago`;
+  const hours = Math.floor(diff / 3600000);
+  if (hours > 0) return `${hours}h ago`;
+  const minutes = Math.max(1, Math.floor(diff / 60000));
+  return `${minutes}m ago`;
 }
 
 function CasesPage() {
@@ -272,11 +305,12 @@ function CasesPage() {
       severity: (c.priority === "critical" ? "critical" : c.priority === "high" ? "high" : "medium") as Severity,
       status: mapCaseStatus(c.status),
       assignee: c.owner,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      slaDeadline: new Date(Date.now() + 86400000).toISOString(),
+      ownerId: c.ownerId,
+      createdAt: c.createdAt ?? new Date(CASE_CLOCK_MS).toISOString(),
+      updatedAt: c.updatedAt ?? c.createdAt ?? new Date(CASE_CLOCK_MS).toISOString(),
+      slaDeadline: new Date(Date.parse(c.updatedAt ?? c.createdAt ?? new Date(CASE_CLOCK_MS).toISOString()) + 86400000).toISOString(),
       slaBreached: false,
-      workflowStep: "triage" as WorkflowStep,
+      workflowStep: STATUS_TO_STEP[mapCaseStatus(c.status)],
       linkedAlerts: [],
       linkedIncidents: [],
       endpoints: [],
@@ -285,10 +319,15 @@ function CasesPage() {
       remediationChecklist: [],
     }));
   }, [casesData]);
+  const { data: usersData } = useOrgUsers();
+  const updateCase = useUpdateCase();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const effectiveId = selectedId ?? casesList[0]?.id ?? "";
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const sel = casesList.find((c) => c.id === effectiveId) ?? casesList[0];
+  // Cases sourced from the API have UUID ids; only those can be mutated server-side.
+  const isApiCase = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(effectiveId);
+  const orgUsers = usersData?.items ?? [];
 
   const openCt = casesList.filter((c) => c.status === "open").length;
   const inProgressCt = casesList.filter((c) => c.status === "in_progress").length;
@@ -298,7 +337,7 @@ function CasesPage() {
   if (!sel) {
     return (
       <div className="p-12 text-center text-muted-foreground">
-        {isLoading ? "Loading cases…" : "No cases found."}
+        {isLoading ? "Loading casesâ€¦" : "No cases found."}
       </div>
     );
   }
@@ -306,7 +345,7 @@ function CasesPage() {
   const toggleCheck = (id: string) => setCheckedItems((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const slaRemaining = (deadline: string) => {
-    const diff = new Date(deadline).getTime() - Date.now();
+    const diff = new Date(deadline).getTime() - CASE_CLOCK_MS;
     if (diff <= 0) return "Breached";
     const hours = Math.floor(diff / 3600000);
     const mins = Math.floor((diff % 3600000) / 60000);
@@ -315,7 +354,7 @@ function CasesPage() {
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0">
-      {/* left panel — case list */}
+      {/* left panel â€” case list */}
       <div className="w-full lg:w-[420px] lg:min-w-[420px] border-r border-border bg-surface/40 flex flex-col">
         <div className="p-4 border-b border-border">
           <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Response / Cases</div>
@@ -359,7 +398,7 @@ function CasesPage() {
         </div>
       </div>
 
-      {/* right panel — case detail */}
+      {/* right panel â€” case detail */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-6 space-y-5 max-w-[1200px] mx-auto">
           {/* header */}
@@ -373,8 +412,8 @@ function CasesPage() {
             <h2 className="text-xl font-semibold tracking-tight">{sel.title}</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] font-mono text-muted-foreground">
               <span className="inline-flex items-center gap-1"><User className="size-3" />{sel.assignee}</span>
-              <span className="inline-flex items-center gap-1"><Clock className="size-3" />Created {formatDistanceToNow(new Date(sel.createdAt), { addSuffix: true })}</span>
-              <span className="inline-flex items-center gap-1"><Clock className="size-3" />Updated {formatDistanceToNow(new Date(sel.updatedAt), { addSuffix: true })}</span>
+              <span className="inline-flex items-center gap-1"><Clock className="size-3" />Created {formatCaseAge(sel.createdAt)}</span>
+              <span className="inline-flex items-center gap-1"><Clock className="size-3" />Updated {formatCaseAge(sel.updatedAt)}</span>
               <span className={cn("inline-flex items-center gap-1", sel.slaBreached ? "text-critical font-semibold" : "")}>
                 <AlertTriangle className="size-3" />SLA: {slaRemaining(sel.slaDeadline)}
               </span>
@@ -386,15 +425,25 @@ function CasesPage() {
             <div className="flex items-center justify-between">
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <User className="size-3.5" /> Assignee
+                {updateCase.isPending && <span className="text-[9px] normal-case text-muted-foreground/70">saving…</span>}
               </div>
-              <select
-                defaultValue={sel.assignee}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs font-mono text-foreground outline-none focus:border-primary"
-              >
-                {ASSIGNEES.map((a) => (
-                  <option key={a} value={a}>{a}</option>
-                ))}
-              </select>
+              {isApiCase && orgUsers.length > 0 ? (
+                <select
+                  value={sel.ownerId ?? ""}
+                  disabled={updateCase.isPending}
+                  onChange={(e) => updateCase.mutate({ id: sel.id, ownerId: e.target.value })}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-xs font-mono text-foreground outline-none focus:border-primary disabled:opacity-50"
+                >
+                  <option value="" disabled>Unassigned</option>
+                  {orgUsers.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="rounded-md border border-border bg-background px-2 py-1 text-xs font-mono text-muted-foreground">
+                  {sel.assignee}
+                </span>
+              )}
             </div>
           </section>
 
@@ -411,13 +460,21 @@ function CasesPage() {
                   const isDone = idx < currentIdx;
                   return (
                     <div key={step} className="flex items-center gap-1 flex-1">
-                      <div className={cn(
-                        "flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider w-full",
-                        isActive ? "border-primary bg-primary/10 text-primary" : isDone ? "border-healthy/40 bg-healthy/10 text-healthy" : "border-border bg-background text-muted-foreground",
-                      )}>
+                      <button
+                        type="button"
+                        disabled={!isApiCase || updateCase.isPending}
+                        onClick={() => updateCase.mutate({ id: sel.id, status: STEP_TO_STATUS[step] })}
+                        title={isApiCase ? `Set status to ${STEP_TO_STATUS[step].replace("_", " ")}` : "Workflow available for saved cases"}
+                        className={cn(
+                          "flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider w-full",
+                          isActive ? "border-primary bg-primary/10 text-primary" : isDone ? "border-healthy/40 bg-healthy/10 text-healthy" : "border-border bg-background text-muted-foreground",
+                          isApiCase && !isActive && "hover:border-primary/60 hover:text-foreground",
+                          (!isApiCase || updateCase.isPending) && "cursor-not-allowed",
+                        )}
+                      >
                         {isDone ? <CheckCircle className="size-3" /> : isActive ? <ChevronRight className="size-3" /> : null}
                         {step}
-                      </div>
+                      </button>
                       {idx < WORKFLOW_STEPS.length - 1 && (
                         <div className={cn("h-px w-3 shrink-0", idx < currentIdx ? "bg-healthy/40" : "bg-border")} />
                       )}
@@ -451,7 +508,7 @@ function CasesPage() {
                         <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">{ev.source}</td>
                         <td className="px-4 py-2.5 text-xs">{ev.description}</td>
                         <td className="px-4 py-2.5 text-[11px] font-mono text-muted-foreground whitespace-nowrap">
-                          {formatDistanceToNow(new Date(ev.timestamp), { addSuffix: true })}
+                          {formatCaseAge(ev.timestamp)}
                         </td>
                       </tr>
                     ))}
@@ -521,7 +578,7 @@ function CasesPage() {
                     <div key={idx} className="px-4 py-2.5">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-[11px] font-mono font-medium text-foreground">{entry.actor}</span>
-                        <span className="text-[10px] font-mono text-muted-foreground">{formatDistanceToNow(new Date(entry.at), { addSuffix: true })}</span>
+                        <span className="text-[10px] font-mono text-muted-foreground">{formatCaseAge(entry.at)}</span>
                       </div>
                       <div className="text-sm">{entry.action}</div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">{entry.detail}</div>
@@ -543,11 +600,11 @@ function CasesPage() {
                   {slaRemaining(sel.slaDeadline)}
                 </div>
                 <div className="text-[11px] font-mono text-muted-foreground mt-1">
-                  Deadline: {new Date(sel.slaDeadline).toLocaleString()}
+                  Deadline: {formatCaseDate(sel.slaDeadline)}
                 </div>
                 {sel.slaBreached && (
                   <div className="flex items-center gap-1.5 mt-2 rounded-md border border-critical/40 bg-critical/10 px-2 py-1.5 text-[10px] font-mono text-critical">
-                    <X className="size-3" /> SLA BREACHED — Immediate escalation required
+                    <X className="size-3" /> SLA BREACHED â€” Immediate escalation required
                   </div>
                 )}
               </section>
@@ -605,7 +662,7 @@ function CasesPage() {
   );
 }
 
-/* ── reusable section wrapper ── */
+/* â”€â”€ reusable section wrapper â”€â”€ */
 
 function Section({ header, icon, children }: {
   header: string; icon?: React.ReactNode; children: React.ReactNode;
@@ -620,3 +677,4 @@ function Section({ header, icon, children }: {
     </section>
   );
 }
+

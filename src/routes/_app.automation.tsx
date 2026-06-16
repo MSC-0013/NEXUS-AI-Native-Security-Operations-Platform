@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
-import { useRunbooks } from "@/lib/api-hooks";
-import { Workflow, Zap, Bell, Globe, Ticket, ArrowRight } from "lucide-react";
+import { useAssignRunbook, useRunbooks } from "@/lib/api-hooks";
+import { Workflow, Zap, Bell, Globe, Ticket, ArrowRight, UserPlus } from "lucide-react";
 import { CircleCheck as CheckCircle2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -24,7 +24,11 @@ interface WF {
 
 function AutomationPage() {
   const { data, isLoading } = useRunbooks();
+  const assignRunbook = useAssignRunbook();
   const [enabledOverride, setEnabledOverride] = useState<Record<string, boolean>>({});
+  const [assignTarget, setAssignTarget] = useState<WF | null>(null);
+  const [assignee, setAssignee] = useState("soc-oncall");
+  const [priority, setPriority] = useState<"low" | "medium" | "high" | "critical">("high");
 
   const wfs: WF[] = useMemo(() => {
     const items = data?.items ?? [];
@@ -79,6 +83,12 @@ function AutomationPage() {
                   <div className="text-xs font-mono">{wf.successRate}% success</div>
                   <div className="text-[10px] font-mono text-muted-foreground">{formatDistanceToNow(wf.lastRun, { addSuffix: true })}</div>
                 </div>
+                <button
+                  onClick={() => setAssignTarget(wf)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                >
+                  <UserPlus className="size-3.5" /> Assign
+                </button>
               </div>
               {/* Action chain */}
               <div className="flex items-center gap-1.5 mt-2 ml-8 flex-wrap">
@@ -114,6 +124,54 @@ function AutomationPage() {
           </div>
         ))}
       </div>
+      {assignTarget && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Workflow assignment</div>
+                <h2 className="text-lg font-semibold">{assignTarget.name}</h2>
+              </div>
+              <button onClick={() => setAssignTarget(null)} className="text-muted-foreground hover:text-foreground">close</button>
+            </div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground block mb-1">Assignee</label>
+                <input
+                  value={assignee}
+                  onChange={(event) => setAssignee(event.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground block mb-1">Priority</label>
+                <select
+                  value={priority}
+                  onChange={(event) => setPriority(event.target.value as typeof priority)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {["low", "medium", "high", "critical"].map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="rounded-md border border-border bg-background/60 p-3 text-xs text-muted-foreground">
+                {assignTarget.actions.length} actions will be queued for the assignee, with audit history retained in the runbook backend.
+              </div>
+              <button
+                onClick={() =>
+                  assignRunbook.mutate(
+                    { id: assignTarget.id, assignee: assignee.trim() || "soc-oncall", priority },
+                    { onSuccess: () => setAssignTarget(null) },
+                  )
+                }
+                disabled={assignRunbook.isPending}
+                className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                Assign workflow
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

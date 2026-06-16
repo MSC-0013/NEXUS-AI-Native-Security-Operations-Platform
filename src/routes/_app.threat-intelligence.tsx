@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   Activity,
@@ -19,14 +19,14 @@ import { MetricCard } from "@/components/metric-card";
 import { useThreatActors, useThreatIocs, useThreatRansomware, useThreatCampaigns, useVulnerabilities } from "@/lib/api-hooks";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 
 export const Route = createFileRoute("/_app/threat-intelligence")({
-  head: () => ({ meta: [{ title: "Threat Intelligence — NEXUS" }] }),
+  head: () => ({ meta: [{ title: "Threat Intelligence â€” NEXUS" }] }),
   component: ThreatIntelligencePage,
 });
 
-/* ── static data ──────────────────────────────────────────────────────── */
+/* â”€â”€ static data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 const THREAT_ACTORS = [
   { id: "a1", name: "APT29", alias: "Cozy Bear / The Dukes", origin: "RU", motivation: "Espionage", ttps: ["T1078", "T1059", "T1071", "T1003"], status: "active" as const, lastSeen: Date.now() - 12 * 60_000, severity: "critical" as Severity },
@@ -78,7 +78,7 @@ const CAMPAIGNS = [
     events: [
       { at: Date.now() - 60 * 86400_000, desc: "Zero-day exploitation of MOVEit Transfer SQL injection" },
       { at: Date.now() - 45 * 86400_000, desc: "Mass data exfiltration from thousands of orgs" },
-      { at: Date.now() - 20 * 86400_000, desc: "Extortion phase — leak sites updated" },
+      { at: Date.now() - 20 * 86400_000, desc: "Extortion phase â€” leak sites updated" },
       { at: Date.now() - 5 * 86400_000, desc: "Supply chain downstream victims identified" },
     ],
     severity: "critical" as Severity,
@@ -106,10 +106,10 @@ const EXPLOITS = [
   { id: "e8", cve: "CVE-2024-20353", name: "Cisco ASA WebVPN DoS", severity: "medium" as Severity, weaponized: false, patched: true, cvss: 8.6, affectedProduct: "Cisco ASA" },
 ];
 
-const ORIGIN_FLAGS: Record<string, string> = { RU: "🇷🇺", KP: "🇰🇵", CN: "🇨🇳", Multi: "🌐" };
+const ORIGIN_FLAGS: Record<string, string> = { RU: "ðŸ‡·ðŸ‡º", KP: "ðŸ‡°ðŸ‡µ", CN: "ðŸ‡¨ðŸ‡³", Multi: "ðŸŒ" };
 const IOC_TYPE_ICON: Record<string, typeof Tag> = { IP: Globe, domain: Globe, hash: Shield, email: Target };
 
-/* ── component ────────────────────────────────────────────────────────── */
+/* â”€â”€ component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function ThreatIntelligencePage() {
   const [activeTab, setActiveTab] = useState("actors");
@@ -125,7 +125,7 @@ function ThreatIntelligencePage() {
     origin: a.origin,
     motivation: a.motivation.join(", "),
     ttps: a.ttps,
-    status: "active" as const,
+    status: (a.lastSeen ? "active" : "dormant") as "active" | "dormant",
     lastSeen: new Date(a.lastSeen).getTime(),
     severity: a.severity as Severity,
   }));
@@ -139,13 +139,32 @@ function ThreatIntelligencePage() {
     lastSeen: Date.now(),
     severity: i.severity as Severity,
   }));
-  const ransomware = ransomwareData?.items ?? RANSOMWARE;
-  const campaigns = campaignData?.items ?? CAMPAIGNS;
-  const exploits = exploitsData?.items?.slice(0, 8) ?? EXPLOITS;
+  const ransomware = (ransomwareData?.items ?? RANSOMWARE).map((rw) => ({
+    ...rw,
+    severity: rw.severity as Severity,
+  }));
+  const campaigns = (campaignData?.items ?? CAMPAIGNS).map((camp) => ({
+    ...camp,
+    events: camp.events.map((event) => ({
+      at: typeof event.at === "string" ? new Date(event.at).getTime() : event.at,
+      desc: event.desc,
+    })),
+    severity: camp.severity as Severity,
+  }));
+  const exploits = exploitsData?.items?.slice(0, 8).map((v) => ({
+    id: v.id,
+    cve: v.cve,
+    name: v.description || v.cve,
+    severity: v.severity as Severity,
+    weaponized: v.exploitStatus === "weaponized" || v.exploitStatus === "active",
+    patched: v.patchStatus === "patched",
+    cvss: v.cvss,
+    affectedProduct: v.description?.split(" ").slice(0, 5).join(" ") || "Tracked asset package",
+  })) ?? EXPLOITS;
 
   return (
     <div className="space-y-6 p-6">
-      {/* ── Header ── */}
+      {/* â”€â”€ Header â”€â”€ */}
       <div className="flex items-center gap-3">
         <div className="flex size-9 items-center justify-center rounded-lg bg-critical/15 text-critical">
           <Crosshair className="size-5" />
@@ -156,16 +175,16 @@ function ThreatIntelligencePage() {
         </div>
       </div>
 
-      {/* ── KPI Cards ── */}
+      {/* â”€â”€ KPI Cards â”€â”€ */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricCard label="Active IOCs" value={iocsLoading ? "…" : iocFeeds.length} icon={Tag} tone="info" />
-        <MetricCard label="Tracked Actors" value={actorsLoading ? "…" : threatActors.length} icon={Skull} tone="critical" />
+        <MetricCard label="Active IOCs" value={iocsLoading ? "â€¦" : iocFeeds.length} icon={Tag} tone="info" />
+        <MetricCard label="Tracked Actors" value={actorsLoading ? "â€¦" : threatActors.length} icon={Skull} tone="critical" />
         <MetricCard label="Feeds Online" value="Live" icon={Activity} tone="healthy" />
-        <MetricCard label="IOC hits" value={iocsLoading ? "…" : iocFeeds.filter((i) => i.confidence >= 90).length} icon={TrendingUp} tone="high" />
+        <MetricCard label="IOC hits" value={iocsLoading ? "â€¦" : iocFeeds.filter((i) => i.confidence >= 90).length} icon={TrendingUp} tone="high" />
         <MetricCard label="Geo Coverage" value={new Set(threatActors.map((a) => a.origin)).size} icon={Globe} tone="default" />
       </div>
 
-      {/* ── Tabs ── */}
+      {/* â”€â”€ Tabs â”€â”€ */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="actors" className="gap-1.5"><Skull className="size-3.5" /> Actors</TabsTrigger>
@@ -175,7 +194,7 @@ function ThreatIntelligencePage() {
           <TabsTrigger value="exploits" className="gap-1.5"><Bug className="size-3.5" /> Exploits</TabsTrigger>
         </TabsList>
 
-        {/* ── Actors Tab ── */}
+        {/* â”€â”€ Actors Tab â”€â”€ */}
         <TabsContent value="actors">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {threatActors.length === 0 && !actorsLoading && (
@@ -192,7 +211,7 @@ function ThreatIntelligencePage() {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">{ORIGIN_FLAGS[actor.origin] ?? "🌐"}</span>
+                    <span className="text-lg">{ORIGIN_FLAGS[actor.origin] ?? "ðŸŒ"}</span>
                     <div>
                       <h3 className="text-sm font-semibold">{actor.name}</h3>
                       <p className="text-[10px] text-muted-foreground font-mono">{actor.alias}</p>
@@ -227,7 +246,7 @@ function ThreatIntelligencePage() {
           </div>
         </TabsContent>
 
-        {/* ── IOCs Tab ── */}
+        {/* â”€â”€ IOCs Tab â”€â”€ */}
         <TabsContent value="iocs">
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-xs">
@@ -288,7 +307,7 @@ function ThreatIntelligencePage() {
           </div>
         </TabsContent>
 
-        {/* ── Ransomware Tab ── */}
+        {/* â”€â”€ Ransomware Tab â”€â”€ */}
         <TabsContent value="ransomware">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {ransomware.map((rw) => (
@@ -344,7 +363,7 @@ function ThreatIntelligencePage() {
           </div>
         </TabsContent>
 
-        {/* ── Campaigns Tab ── */}
+        {/* â”€â”€ Campaigns Tab â”€â”€ */}
         <TabsContent value="campaigns">
           <div className="space-y-4">
             {campaigns.map((camp) => (
@@ -389,7 +408,7 @@ function ThreatIntelligencePage() {
           </div>
         </TabsContent>
 
-        {/* ── Exploits Tab ── */}
+        {/* â”€â”€ Exploits Tab â”€â”€ */}
         <TabsContent value="exploits">
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-xs">
@@ -449,3 +468,4 @@ function ThreatIntelligencePage() {
     </div>
   );
 }
+

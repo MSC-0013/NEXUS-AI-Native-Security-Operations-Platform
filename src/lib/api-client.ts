@@ -82,6 +82,33 @@ export async function apiFetch<T>(
   return res.json();
 }
 
+export async function apiFetchBlob(path: string): Promise<{ blob: Blob; filename: string }> {
+  const tokens = getStoredTokens();
+  const headers: Record<string, string> = {};
+  if (tokens?.accessToken) headers.Authorization = `Bearer ${tokens.accessToken}`;
+
+  let res = await fetch(`${API_URL}${path}`, { headers });
+
+  if (res.status === 401 && tokens?.refreshToken) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers.Authorization = `Bearer ${newToken}`;
+      res = await fetch(`${API_URL}${path}`, { headers });
+    }
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiError(body.error ?? "Download failed", res.status, body.code);
+  }
+
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? "report.csv";
+  const blob = await res.blob();
+  return { blob, filename };
+}
+
 export async function apiStream(
   path: string,
   body: unknown,
@@ -129,5 +156,3 @@ export function getWsUrl(path: string): string {
   const sep = path.includes("?") ? "&" : "?";
   return `${wsBase}${path}${tokens?.accessToken ? `${sep}token=${tokens.accessToken}` : ""}`;
 }
-
-export { API_URL };

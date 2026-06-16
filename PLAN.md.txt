@@ -1,0 +1,1112 @@
+# NEXUS — Engineering Completion Audit & Execution Plan
+
+## Context
+
+NEXUS is an AI-native SOC platform (React 19 + TanStack / Fastify 5 + Drizzle / PostgreSQL RLS).
+This document is a **completion audit**: it enumerates the concrete implementation work required for
+the *documented* architecture (PROJECT-DOCUMENTATION.md, ARCHITECTURE-DEEP-DIVE.md) to be considered
+100% built and production-ready. It is **not** a feature-gap wishlist and **not** future enhancements —
+only work needed to finish what is already designed.
+
+**Ground-truth method:** verified the actual code (33 registered backend modules in
+`apps/api/src/modules`, 45+ frontend routes in `src/routes`, 49 Drizzle tables in
+`packages/db/src/schema.ts`, 11 SQL migrations, `src/lib/api-hooks.ts` ≈98 hooks). The prior
+`AUDIT-REPORT.md` (2026-06-08) is partially stale — Cases CRUD, AI endpoints, suppression rules,
+policies, incident escalate/rca/postmortem, vuln patch, investigation notes now **exist**. This audit
+supersedes it with the current state.
+
+**Top systemic findings (apply platform-wide):**
+1. **No automated tests** anywhere (0 `.test`/`.spec` files). **No CI** (`.github/workflows` absent).
+2. **No background processing**: no BullMQ, no node-cron, no workers. The only async loop is a 3s
+   `setInterval` poll in `realtime/websocket.routes.ts`. Detection rules, report generation, webhook
+   delivery, cloud sync, alert evaluation, SLA breach, embeddings — all have no engine.
+3. **RLS connection-pinning risk** (documented): `set_config(..., false)` on a 20-conn `postgres-js`
+   pool can hand the follow-up Drizzle query a different connection → cross-tenant leak under load.
+4. **Schema drift**: `packages/db/src/schema.ts` (49 tables) is behind `database/migrations/001_schema.sql`
+   (richer columns: MFA, SSO, lockout on users; isolation/SLA fields on incidents; etc.). No drizzle-kit guard.
+5. **Permission mismatches**: several write endpoints guard on `view:*` instead of `act:*`/`manage:*`
+   (investigations POST/PATCH/notes, policies GET, reports POST, runbooks assign, detection-rules POST/PATCH/import).
+6. **SaaS commercial layer absent**: no signup, billing, plans, metering, trials, licensing, tenant lifecycle.
+7. **Integrations are CRUD-only stubs**: no connectors, no webhook delivery, no sync.
+8. **AI is partly real, partly heuristic/static**: Copilot uses OpenAI when keyed (else canned fallback);
+   RAG is keyword `ILIKE`, not vector (pgvector + `document_embeddings` are commented out); `/ai/*` endpoints
+   return DB-derived heuristics with hardcoded confidence; `/ai/hunt-assist` is pure string templating.
+
+---
+
+# PART 1 — PER-MODULE AUDIT
+
+Legend: ✅ real DB-backed · 🟡 partial/mock-mixed · 🔴 static/stub/local-only · ❌ absent
+
+## 1. Events & Hunt
+**Current State:** `/events` ✅ list+detail+WS live stream; suppress-similar, create-incident, create-investigation all real. Hunt `/results` ✅ real `security_events` query w/ field filters+pagination; `/hunt/queries` & `/hunt/anomalies` 🔴 static `const QUERIES`/`const ANOMALIES`.
+**Missing Backend:**
+- Routes: `POST /v1/hunt/queries` (save), `PATCH/DELETE /v1/hunt/queries/:id`, `POST /v1/hunt/queries/:id/run`, `POST /v1/hunt/queries/:id/schedule`; `GET /v1/events/export`.
+- Services: `HuntQueryService` (persist/run/schedule), `AnomalyService` (compute anomalies from telemetry baselines, not static).
+- Business logic: anomaly detection over `security_events` (rolling baselines); scheduled hunt execution (queue + cron).
+- Validation schemas: save-query, schedule-query.
+- Cron/queue: scheduled hunt runner; anomaly recompute job.
+**Missing Frontend:** Save-query form + Save button wiring on `/hunt`; schedule-query modal; saved-query management table; events bulk actions (bulk suppress / bulk create incident); events export button.
+**Missing Database:** `hunt_queries` (id, org_id, name, query, schedule_cron, last_run_at, created_by, created_at — RLS); optional `hunt_anomalies` if persisted. Index `security_events(organization_id, severity)`.
+
+## 2. Alerts & Detection Rules
+**Current State:** `/alerts` ✅ list/ack/suppress-similar/create-incident; suppression-rules ✅ full CRUD. Detection-rules ✅ CRUD+test+import. UI 🔴 `SUPPRESSIONS`, `ESCALATION_CHAIN`, `ROUTING_RULES`, `CHANNELS` are static arrays. No rule **evaluation engine** (rules never actually fire alerts from events).
+**Missing Backend:**
+- Routes: `GET/POST/PATCH/DELETE /v1/alerts/escalation-policies`, `.../routing-rules`, `.../notification-channels`; `DELETE /v1/detection-rules/:id`; `POST /v1/detection-rules/:id/enable|disable` (explicit).
+- Services: `EscalationPolicyService`, `RoutingRuleService`, `NotificationChannelService`, `DetectionRuleEngine` (evaluate enabled rules against `security_events` → create `alerts`).
+- Business logic: rule→event matching, dedup/`dedup_count`, threshold/lookback windowing, false/true-positive counters.
+- Permissions: detection-rules POST/PATCH/import currently use `view:detection-rules` → must be `manage:detection-rules`.
+- Cron/queue: periodic detection-rule evaluation per `run_frequency_minutes`; escalation timers.
+- WebSocket: push new alerts / alert status changes.
+**Missing Frontend:** Create/edit suppression-rule form (panel exists, form missing); escalation-policy builder; routing-rule builder; notification-channel config form; detection-rule edit form, delete confirm, "Test" results modal, "Import" file-upload dialog, "Use Template" prefill.
+**Missing Database:** `escalation_policies`, `routing_rules`, `notification_channels` (all org-scoped + RLS). Add `alert_rules.last_run_at`, link `alerts.rule_id`/`endpoint_id`/`source_ip` (in 001_schema.sql but missing from schema.ts — reconcile).
+
+## 3. Incidents
+**Current State:** ✅ list/detail/status/assignee/rca/comments/timeline/evidence/escalate/postmortem/investigation, remediations CRUD. 🟡 SLA computed-fake (hardcoded 240/180m); responders & escalations **not persisted** (derived from comments/timeline); postmortem is a static template (no LLM); list has N+1 sub-queries.
+**Missing Backend:**
+- Routes: `POST /v1/incidents` (manual create), `PATCH /v1/incidents/:id` (edit), `DELETE`, `POST /:id/evidence` (real upload), `DELETE /:id/responders/:rid`.
+- Services: real `IncidentResponderService` & `IncidentEscalationService` (persist, not synthesize); `SlaService` (config-driven, breach detection); LLM-backed postmortem generation.
+- Business logic: SLA policy per severity + breach timer; evidence file storage (S3); fix list N+1 (JSON aggregation).
+- Audit: dashboard/responder synth-paths don't all log — ensure mutations audited.
+- Cron/queue: SLA-breach watcher; auto-escalation on breach; async postmortem generation.
+- WebSocket: push incident status/severity changes.
+**Missing Frontend:** Create-incident form; edit-incident modal; delete confirm; manage-responders form (add/remove real users); evidence upload dialog; SLA policy editor; bulk actions on list (bulk status/assign/close); incidents advanced filters; remove `MOCK_RESPONDERS/MOCK_SLA/MOCK_ESCALATIONS/MOCK_REMEDIATIONS` fallbacks.
+**Missing Database:** `incident_responders`, `incident_escalations` (referenced/synthesized today; 001_schema.sql has `incident_responders` but no RLS) — add real tables + RLS. `sla_policies` (org, severity, target_minutes, escalation_minutes). RLS on `incident_timeline/comments/evidence/recommendations` (child tables currently lack RLS).
+
+## 4. Cases
+**Current State:** ✅ full CRUD (list/get/create/update/delete) with audit. UI assignee + workflow-step wired; 🟡 rich detail panels (evidence, activity, linked alerts/incidents, endpoints) are presentational; UI still has a hardcoded `CASES` fallback risk on empty.
+**Missing Backend:**
+- Routes: `GET/POST /v1/cases/:id/evidence`, `.../tasks`, `.../activity`, `.../watchers`, `.../linked` (alerts/incidents link), `POST /v1/cases/:id/close`.
+- Services: `CaseEvidenceService`, `CaseTaskService`, `CaseActivityService`, `CaseWatcherService`, `CaseLinkService`.
+- Permissions: define `act:cases`/`manage:cases` (today writes use `act:incidents`).
+- WebSocket: case status/assignment change push.
+**Missing Frontend:** Case detail page/drawer; create-case form, edit-case form, escalate/close forms; evidence tab+add form; tasks tab+add form; activity feed; watchers UI; bulk assign/close modals; link alerts/incidents picker.
+**Missing Database:** `case_evidence`, `case_tasks`, `case_activity`, `case_watchers`, `case_incidents`/`case_alerts` link tables (all org-scoped + RLS, FK→cases). Columns per table: standard id/org_id/case_id/created_at + payload; indexes on case_id; RLS `..._org_policy`.
+
+## 5. Investigations
+**Current State:** ✅ CRUD + notes (DB-backed). UI 🔴 keeps a hardcoded `INVESTIGATIONS` array (rich notebooks/log/evidence/AI summary) as fallback; no real detail editing surface; evidence/endpoints/AI-summary panels presentational.
+**Missing Backend:**
+- Routes: `GET/POST /v1/investigations/:id/evidence`, `.../entities` (linked endpoints/IOCs), `POST /:id/ai-summary` (LLM).
+- Services: `InvestigationEvidenceService`, `InvestigationEntityService`, AI-summary generation.
+- Permissions: POST/PATCH/notes currently `view:investigations` → must be `act:investigations`.
+**Missing Frontend:** Full notebook detail/editor page; create form (modal exists minimally); evidence panel + add; linked-entities panel; AI-summary generate button wiring; delete confirm; remove mock array fallback.
+**Missing Database:** `investigation_evidence`, `investigation_entities` (org-scoped, FK→investigation_notebooks, RLS).
+
+## 6. Vulnerabilities
+**Current State:** ✅ list + patch/dismiss (audited). Patch status lives on **global** `vulnerabilities.patch_status` (cross-org bleed) — per-tenant status belongs on `asset_vulnerabilities.status`.
+**Missing Backend:**
+- Business logic: move patch/dismiss writes to `asset_vulnerabilities.status` (per-tenant), not the global row.
+- Routes: `GET /v1/vulnerabilities/:id` detail; `POST /v1/vulnerabilities/:id/exception` (justification + expiry); bulk patch endpoint.
+- Cron/queue: CVE/EPSS feed sync job; exposure recompute.
+**Missing Frontend:** Vuln detail view; bulk patch/dismiss actions; exception form (justification, expiry); filters (severity/exploit/EPSS), search beyond basic.
+**Missing Database:** `asset_vulnerabilities` add `patch_status`, `exception_reason`, `exception_expires_at`. Index `asset_vulnerabilities(organization_id, status)`.
+
+## 7. Threat Intelligence
+**Current State:** ✅ actors + IOCs (DB). 🔴 `ransomware` & `campaigns` endpoints return hardcoded arrays.
+**Missing Backend:** `RansomwareService` + `CampaignService` backed by tables; `POST/PATCH/DELETE /v1/threat-intel/iocs` (IOC management); IOC feed ingestion job.
+**Missing Frontend:** IOC create/edit/delete forms; actor detail drawer; ransomware/campaign data wired to real API (currently static); IOC bulk import.
+**Missing Database:** `ransomware_groups`, `threat_campaigns` (+ `campaign_actors` link). Make `iocs` writable via API.
+
+## 8. Endpoints & Forensics
+**Current State:** Endpoints ✅ list/detail/isolate. Forensics 🔴 **100% static** — `GET /v1/forensics/:endpointId` returns one hardcoded `DEFAULT_DATA` for every endpoint.
+**Missing Backend:**
+- Services: real `ForensicsService` reading `endpoint_processes`, `endpoint_network_connections`, `endpoint_malware_indicators`, file/binary tables.
+- Routes: `POST /v1/endpoints/:id/unisolate`, `POST /:id/scan`, `GET /:id/processes`, `GET /:id/network`.
+- Cron/queue: endpoint check-in / agent telemetry ingestion (no ingestion API today).
+**Missing Frontend:** Endpoint detail page with real process tree/network/forensics; unisolate action; scan action; endpoint filters/bulk isolate.
+**Missing Database:** populate/define `endpoint_processes`, `endpoint_network_connections` (001_schema has them; not in schema.ts + no data path). Forensic artifact tables. Ingestion endpoint `POST /v1/ingest/endpoint-telemetry`.
+
+## 9. Cloud Security
+**Current State:** ✅ summary/resources/accounts/iam-findings/storage/compliance all DB-backed. No actual cloud **sync** (accounts are static rows).
+**Missing Backend:** `POST /v1/cloud/accounts` (connect), `DELETE /:id`, `POST /:id/sync`; `PATCH /v1/cloud/iam-findings/:id/resolve`; real AWS/GCP/Azure connector + scheduled sync job; `events_ingested`/`last_sync_at` updated by sync.
+**Missing Frontend:** Connect-account wizard (provider, creds/role ARN); resolve-finding action; per-account sync button; resource filters/bulk.
+**Missing Database:** `cloud_compliance_checks` (referenced); RLS on `cloud_assets`/`cloud_iam_findings` (child tables lack RLS — covered only via account join).
+
+## 10. Network
+**Current State:** ✅ flows + DNS (DB-backed, read-only). No ingestion.
+**Missing Backend:** flow/DNS ingestion endpoint + telemetry source; `PATCH /v1/network/flows/:id` (mark malicious/whitelist); aggregation endpoints (top talkers, geo).
+**Missing Frontend:** Flow filters (proto/malicious/geo), DNS filters (DGA/blocklist), mark-malicious action, drill-down detail.
+**Missing Database:** Index `network_flows(organization_id, is_malicious)`; `dns_queries(organization_id, is_dga)`.
+
+## 11. Attack Graph (+ Security Graph, Attack Replay, Threat Simulation)
+**Current State:** `/attack-graphs` ✅ list/detail. `/security-graph` 🔴 hardcoded nodes/edges. `/attack-replay` 🔴 100% static. `/threat-simulation` 🔴 100% static (no API).
+**Missing Backend:** `POST /v1/attack-graphs` (generate from incident), `POST /:id/replay`; `SecurityGraphService` (build from real assets/identities/edges); `ThreatSimulationService` (attack-path simulation engine).
+**Missing Frontend:** Wire security-graph/attack-replay/threat-simulation to real APIs; generate-graph action; simulation config form + run.
+**Missing Database:** RLS on `attack_graph_nodes`/`attack_graph_edges`. `threat_simulations` table if persisted.
+
+## 12. Compliance
+**Current State:** ✅ `GET /assessments` read-only (eager-loads controls).
+**Missing Backend:** `GET /v1/compliance/assessments/:id`; `POST` (create assessment); `PATCH /v1/compliance/controls/:id` (update status/evidence); `POST /:id/evidence`; framework templates (SOC2/ISO/HIPAA/GDPR/PCI); score recompute on control change.
+**Missing Frontend:** Assessment detail page; control status update UI; evidence upload; create-assessment wizard; framework picker; export report.
+**Missing Database:** RLS on `compliance_controls`; `compliance_evidence` table; `compliance_frameworks`/`control_templates` (seed).
+
+## 13. Reports
+**Current State:** ✅ list/create/download (real CSV for `dashboard_summary`). Status stuck at `pending` (never marked generated); CSV-only; no async; scheduled-reports UI static.
+**Missing Backend:** mark report `generated` after build; PDF/JSON formats; async generation via queue; `GET/POST/PATCH/DELETE /v1/reports/schedules` (cron-driven); S3 storage of artifacts; email/Slack delivery.
+**Missing Frontend:** Report-type/parameter form (beyond export); schedule create/edit form; format picker; report preview; delivery config.
+**Missing Database:** `scheduled_reports` exists in migrations — wire it; `report_deliveries`. Object storage for `reports.storage_uri`.
+**Cron/queue:** report generation worker; scheduled-report cron.
+
+## 14. Copilot / AI
+**Current State:** ✅ sessions/messages persisted, SSE streaming. LLM real when `OPENAI_API_KEY` set, else 🟡 canned fallback. RAG 🟡 keyword `ILIKE` only. `/ai/threat-scoring|anomalies|recommendations` ✅ DB-derived but hardcoded confidence; `/ai/hunt-assist` 🔴 static templating. `ai-scoring` heuristic (not ML).
+**Missing Backend:** enable pgvector + `document_embeddings`; embedding pipeline (index knowledge/incidents/runbooks); vector retrieval in RAG; LLM-backed `/ai/hunt-assist`, recommendations, postmortem; tool-calling workflows (isolate host, create incident) gated by permission; per-org token budgets/metering; Anthropic provider option (docs default to latest Claude).
+**Missing Frontend:** Citations rendering; workflow picker; budget/usage display; degraded-mode banner already present.
+**Missing Database:** `document_embeddings` (pgvector, org-scoped, RLS) — currently commented out in `002_rls_and_rag.sql`.
+**Cron/queue:** embedding/indexing job; nightly score recalibration; copilot_messages retention purge.
+
+## 15. Users / Organizations / Identity
+**Current State:** Users ✅ CRUD (`/v1/users`). `/v1/orgs/current` ✅ read-only. identity-anomalies ✅ but **org-filter concern** (relies on RLS only). Organizations **page** 🔴 uses local `accounts-store` (not the real `/v1/users`). Profile page 🔴 sessions/devices/tokens/providers all in local `profile-store`.
+**Missing Backend:** org update `PATCH /v1/orgs/current`; org settings; `GET/DELETE /v1/users/:id/sessions`; user devices/PAT endpoints; invite flow `POST /v1/users/invite`; resolve identity anomaly endpoint.
+**Missing Frontend:** Wire Organizations page to `useOrgUsers/useCreateUser/useUpdateUser/useDeleteUser` (remove accounts-store); wire Profile sessions/devices/tokens to real endpoints; invite-user form; role-change confirm.
+**Missing Database:** `personal_access_tokens`, `user_devices` (or reuse `user_sessions`); org `settings` usage.
+
+## 16. Knowledge / Runbooks / Automation
+**Current State:** Knowledge ✅ list/detail/create. Runbooks ✅ list + assign. No runbook **execution engine**; bookmark not persisted.
+**Missing Backend:** Knowledge `PATCH/DELETE /:id`, `PATCH /:id/bookmark`; Runbooks `POST/PATCH/DELETE`, `POST /:id/execute`, steps CRUD; `RunbookExecutionService` (run steps, log to `runbook_executions`); SOAR action handlers.
+**Missing Frontend:** Knowledge edit/delete, bookmark persistence, article create form polish; runbook builder (steps), execute button, execution history, "Create Workflow" onClick (currently none).
+**Missing Database:** `runbook_executions` exists in migrations — wire it; `knowledge_bookmarks`. RLS on `runbook_steps`.
+
+## 17. Developer (API Keys / Webhooks)
+**Current State:** ✅ API keys + webhooks CRUD. 🔴 **no webhook delivery** — `webhook_deliveries` table exists but nothing posts to URLs.
+**Missing Backend:** outbound webhook delivery worker (HMAC-sign with `WEBHOOK_SIGNING_SECRET`, retry w/ backoff, SSRF allowlist), populate `webhook_deliveries`; `PATCH /webhooks/:id` (toggle/edit); `POST /webhooks/:id/test`; API-key scope enforcement on routes; key rotation; rate-limit per key.
+**Missing Frontend:** Webhook edit/test UI; delivery log view; key scope editor; rotate key.
+**Cron/queue:** webhook delivery queue + retry.
+
+## 18. Notifications
+**Current State:** ✅ list + mark-read/all (DB). Frontend `notifications-store` seeds local data and may not sync with API.
+**Missing Backend:** notification **creation** on real events (incident/alert/SLA) — currently nothing inserts notifications; WS push of new notifications; preferences-driven routing.
+**Missing Frontend:** Reconcile local store with `useApiNotifications`; per-type filters; notification settings.
+**Missing Database:** (table exists) — add producers across services.
+
+## 19. Dashboard / Executive / Status / Platform-Health / Digital-Twin / Timeline
+**Current State:** Dashboard ✅ mostly real; 🟡 `blockedAttacks24h` faked (×12), executive `financial`/`sla`/`mttd` hardcoded. Platform-health ✅ but uptime hardcoded "99.99%". `/status` 🔴 SERVICES/REGIONS/MAINTENANCE static. `/digital-twin` 🔴 NODES/EDGES static. `/timeline` 🟡 mixes real+mock.
+**Missing Backend:** real SLA-compliance & MTTD computation; financial metrics source (or remove); platform-health uptime from history; services/regions/maintenance tables; `GET /v1/topology`; unified `GET /v1/timeline` (events+incidents+alerts).
+**Missing Frontend:** wire status/digital-twin/timeline to real APIs; maintenance-window admin form.
+**Missing Database:** `platform_services`, `platform_regions`, `maintenance_windows`; topology source.
+
+---
+
+# PART 2 — MISSING INTEGRATIONS
+
+Integrations are **CRUD-only stubs** (`platform_integrations` row store) with **no connector code**.
+
+| Integration | State | Frontend | Backend | Database | Webhook | Sync | Scheduler |
+|---|---|---|---|---|---|---|---|
+| Generic platform_integrations | Backend-only (CRUD list) | Connect wizard, edit, remove, test | POST/PATCH/DELETE + connector interface | config encryption | inbound webhook receiver | sync engine | per-integration cron |
+| Slack/Teams (notify) | None | Channel config | OutboundNotifier service | channel creds (encrypted) | — | — | — |
+| AWS/GCP/Azure (cloud) | UI+rows only | Connect form (role ARN/creds) | Cloud SDK connector | `cloud_accounts` creds | — | asset/IAM pull | scheduled sync |
+| EDR (CrowdStrike/SentinelOne) | None | Connect form | Telemetry pull connector | endpoint ingestion | — | endpoint sync | poll |
+| SIEM/log sources | None | Source config | `POST /v1/ingest/events` (API-key scoped) | — | inbound | — | — |
+| Jira/ServiceNow (ticketing) | None | Mapping config | Ticket-sync connector | external_ref columns | bi-dir webhook | case/incident sync | — |
+| Threat-intel feeds (IOC) | Static | Feed config | Feed importer | `iocs` writes | — | feed pull | scheduled |
+| Outbound webhooks (own) | CRUD only | test/delivery log | **delivery worker** | `webhook_deliveries` | outbound | retry queue | retry backoff |
+
+For every integration: encrypt secrets at app layer, SSRF-allowlist outbound URLs, store `last_sync_at`/`last_error`, surface sync status in UI.
+
+---
+
+# PART 3 — MISSING API SURFACE (per module)
+
+For each module: **Impl** = implemented, **Miss** = missing, plus quality flags.
+
+- **Auth** — Impl: login/refresh/logout/me. Miss: password reset, MFA enroll/verify, SSO login. Quality: demo-password fallback in `auth.service` (insecure for prod).
+- **Events** — Impl: list/get + 3 actions. Miss: export, bulk actions. Mock: none. Pagination ✅, filtering ✅.
+- **Hunt** — Impl: results (real). **Mock-returning:** `/hunt/queries`, `/hunt/anomalies` (static). Miss: save/run/schedule queries.
+- **Alerts** — Impl: list/ack/suppress/incident + suppression-rules CRUD. Miss: escalation-policies, routing-rules, channels CRUD; **rule evaluation engine**. No WS push.
+- **Detection-rules** — Impl: list/create/patch/test/import. Miss: DELETE. **Authz bug:** POST/PATCH/import on `view:` perm. No real scheduling/execution.
+- **Incidents** — Impl: 18 endpoints. **Mock/computed:** SLA, responders, escalations, postmortem. Miss: create/edit/delete, evidence upload, responder delete. N+1 in list.
+- **Cases** — Impl: full CRUD. Miss: evidence/tasks/activity/watchers/linked/close endpoints. **Authz:** uses `act:incidents` (no `act:cases`).
+- **Investigations** — Impl: CRUD + notes. **Authz bug:** writes on `view:`. Miss: evidence/entities/ai-summary.
+- **Vulnerabilities** — Impl: list/patch. Miss: detail, exception, bulk. **Bug:** patch on global row (cross-org).
+- **Endpoints** — Impl: list/get/isolate. Miss: unisolate/scan/processes/network. **Forensics: 100% static.**
+- **Threat-intel** — Impl: actors/iocs (read). **Mock:** ransomware/campaigns. Miss: IOC write, feeds.
+- **Cloud** — Impl: 6 read endpoints. Miss: connect/sync/resolve. No real sync.
+- **Network** — Impl: flows/dns (read). Miss: ingestion, mark-malicious, aggregations.
+- **Attack-graph** — Impl: list/get. Miss: generate/replay. security-graph/replay/simulation have no API.
+- **Compliance** — Impl: list only. Miss: detail/create/control-update/evidence.
+- **Reports** — Impl: list/create/download(CSV). Miss: schedules CRUD, formats, async, delivery. Status never advances. **Authz:** POST on `view:`.
+- **Copilot/AI** — Impl: sessions/messages/stream; `/ai/*` 4 endpoints (heuristic); rescore. Miss: vector RAG, LLM hunt-assist, tool-calling, budgets.
+- **Users/Orgs** — Impl: user CRUD, org read. Miss: org update, sessions/devices/PAT, invite, anomaly resolve. **Identity-anomalies org-scope** to verify.
+- **Knowledge** — Impl: list/get/create. Miss: update/delete/bookmark.
+- **Runbooks** — Impl: list/assign. Miss: CRUD, execute, steps, execution history. **Authz:** assign on `view:`.
+- **Developer** — Impl: keys/webhooks CRUD. Miss: webhook edit/test, **delivery**, scope enforcement, rotation.
+- **Notifications** — Impl: list/read. Miss: producers (nothing creates notifications), WS push, settings.
+- **Policies** — Impl: list/create/toggle/delete. **Authz bug:** GET on `view:alerts`. Miss: detail/edit, violations source.
+- **Platform-health/Status** — Impl: status read. **Mock:** uptime, services/regions/maintenance.
+- **Search** — Impl: cross-resource. Miss: pagination, type filters, FTS index (uses ILIKE).
+- **Dashboard** — Impl: stats/executive. **Mock:** financial/sla/mttd/blocked-attacks. No audit on reads (fine).
+- **Realtime WS** — Impl: events poll-over-WS. Miss: true push for incident/alert/case/notification changes; real stream stats (lag faked).
+
+Endpoints **missing pagination:** endpoints, vulnerabilities, network, threat-intel, cloud lists, search (limit-only, no cursor). **Missing sorting controls:** most lists hardcode order. **Missing filtering:** vulnerabilities (only search), endpoints, network, knowledge.
+
+---
+
+# PART 4 — MISSING FRONTEND FORMS (all modules)
+
+- **Incidents:** Create, Edit, Assign, Escalate(real), Close, Add Evidence(upload), Manage Responders, SLA Policy, Generate RCA(persist), Generate Postmortem(LLM).
+- **Cases:** Create, Edit, Assign, Escalate, Close, Add Evidence, Add Task, Add Watcher, Link Alert/Incident.
+- **Alerts:** Create Suppression Rule, Edit Suppression Rule, Escalation Policy, Routing Rule, Notification Channel.
+- **Detection Rules:** Edit Rule, Delete confirm, Test-results modal, Import (file upload), Use-Template prefill.
+- **Investigations:** Create, Edit (notebook editor), Add Evidence, Add Entity, Delete confirm.
+- **Vulnerabilities:** Patch (bulk), Dismiss, Create Exception, Filters.
+- **Threat Intel:** Create/Edit/Delete IOC, Import IOCs, Add Campaign.
+- **Cloud:** Connect Account wizard, Resolve Finding, Sync.
+- **Compliance:** Create Assessment, Update Control, Add Evidence, Export.
+- **Reports:** Generate (type+params), Schedule (cron+recipients), Format picker, Delivery config.
+- **Runbooks/Automation:** Create Workflow, Edit, Add Step, Execute, Schedule.
+- **Knowledge:** Edit, Delete, Bookmark.
+- **Users/Orgs:** Invite User, Edit User, Delete confirm, Org Settings, Role change confirm (wire to API, drop accounts-store).
+- **Profile:** Revoke Session, Trust Device, Create/Revoke PAT, Manage OAuth (wire to API, drop profile-store).
+- **Developer:** Edit Webhook, Test Webhook, Rotate Key, Scope editor.
+- **Policies:** Create Policy, Edit Policy, Delete confirm.
+- **SSO:** Provider setup wizard, MFA/JIT/SCIM toggles (currently no handlers/API).
+- **Onboarding:** all 5 steps need real submit actions.
+- **Billing:** Plan change, Payment method, Seat management (none real).
+
+---
+
+# PART 5 — MISSING STATE MANAGEMENT
+
+- **Missing React Query hooks:** preferences (get/update), org update, user sessions/devices/PAT, runbook execute, knowledge update/delete/bookmark, webhook edit/test + deliveries, compliance control update, cloud connect/sync/resolve, IOC CRUD, incident create/edit/delete + evidence + responders(real), case sub-resources, hunt save/schedule, escalation/routing/channels, topology, unified timeline, threat-scoring confidence.
+- **Missing invalidations:** `useTestDetectionRule` (no invalidate); ensure incident escalate/responders invalidate SLA & timeline; dashboard should invalidate after producing notifications.
+- **Missing WebSocket subscriptions:** incident/alert/case/notification change streams (only raw events today). `useConnectionState` is OK; `useStreamStats.lagMs` is `Math.random()` (faked) — needs real metric or removal.
+- **Missing optimistic updates:** none exist anywhere (`onMutate`) — add for status toggles, ack, mark-read, patch.
+- **Local-only Zustand stores substituting for backend (must migrate to API):** `accounts-store` (→ users API), `profile-store` (→ sessions/devices/PAT API), `workspace-store` (→ org/workspace API), `preferences-store` (→ preferences API), `correlation-store` (→ correlations API — none exists), `collaboration-store` (→ collaboration API + WS — none exists), `incident-store` overrides (status/assignee should call mutations, not local persist).
+- **Missing caching:** dashboard KPI cache (Redis) absent; no staleTime tuning noted; FTS/search cache.
+
+---
+
+# PART 6 — MISSING BACKEND ARCHITECTURE
+
+- **Missing services:** DetectionRuleEngine, AnomalyService, HuntQueryService, SlaService, IncidentResponder/EscalationService (real), CaseEvidence/Task/Activity/Watcher/LinkService, InvestigationEvidence/EntityService, ForensicsService(real), RansomwareService, CampaignService, IocService(write), CloudConnector + CloudSyncService, RunbookExecutionService, WebhookDeliveryService, NotificationProducerService, EmbeddingService/VectorRagService, TopologyService, TimelineService, ReportGenerationService(async), BillingService, UsageMeteringService, OnboardingService, SsoService.
+- **Missing DTOs/mappers/validators:** for every new endpoint above (the codebase uses inline Zod + ad-hoc mappers; `@nexus/shared` schemas missing for new shapes). Formalize create/update/query validators per module (the IMPLEMENTATION-PLAN's validators/dtos/mappers layering is not actually present).
+- **Missing repository layer:** docs describe controller/service/repository; reality is routes+service with inline Drizzle. Not blocking, but no separation/tests.
+- **Missing middleware/policies:** API-key auth middleware (keys exist but not enforced on routes), idempotency-key middleware (POST creates), tenant-context **connection pinning** (transaction/reserved conn), per-key rate limiting.
+- **Missing event handlers / domain events:** no event bus — incident/alert state changes don't fan out to notifications, WS, webhooks, or audit consistently.
+- **Missing background workers / queue consumers / scheduled jobs (NONE exist today):**
+  - Detection-rule evaluation (per `run_frequency_minutes`).
+  - Alert→SLA breach watcher + auto-escalation.
+  - Report generation + scheduled reports (cron).
+  - Webhook delivery + retry.
+  - Cloud sync, EDR telemetry, IOC feed pulls (cron).
+  - Embedding/indexing for RAG.
+  - Copilot message retention purge; nightly score recalibration.
+  - Notification fan-out.
+  Requires wiring BullMQ + Redis (present in compose, currently unused) and a worker process.
+
+---
+
+# PART 7 — MISSING SECURITY
+
+- **RBAC enforcement gaps:** write endpoints on `view:*` perms — investigations POST/PATCH/notes, policies GET, reports POST, runbooks assign, detection-rules POST/PATCH/import. Define missing perms: `act:cases`/`manage:cases`, `act:investigations`, `manage:detection-rules`, `view:policies`/`manage:policies`, `manage:sso`, `act:reports`. Sync `src/lib/rbac.ts` ↔ seed roles ↔ route guards.
+- **Tenant isolation:** RLS connection-pinning risk (reserve conn or `SET LOCAL` in txn). Child tables lack RLS (`incident_*`, `cloud_assets/iam_findings`, `attack_graph_nodes/edges`, `runbook_steps`, `compliance_controls`, `copilot_messages`, `webhook_deliveries`) — add policies or guarantee parent-join scoping. Verify `identity-anomalies` org scope.
+- **Vulnerability cross-org bleed:** global `patch_status` (move to `asset_vulnerabilities`).
+- **Rate limiting:** only per-IP global; missing per-API-key and per-user limits; no abuse protection on auth/login.
+- **Audit logging:** plugin logs API mutations only — Organizations/Profile pages bypass API (no audit); dashboard/AI reads fine. Ensure every state change goes through API.
+- **Encryption:** no app-layer encryption of secrets (`platform_integrations.config`, webhook `secret_key`, cloud creds, SSO metadata). No KMS/secrets manager — JWT/LLM keys via env defaults.
+- **Secret management:** prod secrets hardcoded defaults in env/compose; no Vault/Secrets Manager.
+- **Security headers:** helmet present ✅; verify CSP for app.
+- **Validation:** present (Zod) on most routes ✅; missing on new endpoints; no SSRF allowlist for webhooks; no upload validation (no upload exists yet).
+- **CSRF:** token-in-Authorization model (low CSRF risk) but no explicit protection if cookies introduced.
+- **Session controls:** no session listing/revoke API (profile-store is local); no idle timeout enforcement server-side; demo-password fallback must be removed for prod; no account lockout (columns exist in 001_schema, unused).
+- **MFA/SSO:** columns exist (`users.mfa_*`, `sso_*`) but **no enrollment/verify/login code**.
+
+---
+
+# PART 8 — MISSING SAAS FEATURES (entirely absent)
+
+- **Tenant onboarding:** `/onboarding` is UI-only (no submit). Need `OnboardingService` + endpoints to create workspace, link cloud, configure alerts, provision agents.
+- **Organization creation / signup:** no self-service signup; orgs only seeded via migrations. Need public signup → org+admin user creation, email verification.
+- **Subscription management:** none. Need `subscriptions` table, lifecycle (trial/active/past_due/canceled), gateway (Stripe) integration, webhooks.
+- **Billing:** `/billing` is hardcoded mock. Need payment methods, invoices (`invoices` table), billing portal.
+- **Plans:** none. Need `plans`/`plan_features` tables, plan→feature gating, plan picker.
+- **Usage metering:** none enforced. Need `usage_counters` (events, AI tokens, endpoints, storage), increment hooks, quota enforcement middleware, overage handling.
+- **Trial management:** none. Need trial start/expiry, conversion, expiry notifications.
+- **License management:** none. Need license issuance/validation if self-hosted.
+- **Tenant deletion:** only hard `ON DELETE CASCADE`. Need soft-delete + scheduled purge + confirmation.
+- **Tenant export:** none (GDPR). Need `POST /v1/orgs/current/export` → async dump to object store.
+- **Tenant backup:** none beyond DB-level (which isn't configured).
+
+---
+
+# PART 9 — MISSING PRODUCTION FEATURES
+
+- **Testing (≈0%):** no unit/integration/E2E. Add Vitest (services: RLS isolation, mappers, audit, auth, scoring), Supertest/Testcontainers for API+Postgres, Playwright E2E for the core workflows. Contract tests for `@nexus/shared` ↔ routes.
+- **CI/CD:** no pipeline. Add GitHub Actions: install → `tsc --noEmit` (web+api) → lint → test → build → migrate-check (drizzle-kit) → deploy gate.
+- **Monitoring/Observability:** Fastify logger only. Add structured logging (pino transport), Prometheus metrics (p95/route, WS conns, queue depth), OpenTelemetry tracing, Sentry error tracking, dashboards + alerting.
+- **Backups / DR:** none. Add managed Postgres w/ PITR, backup schedule, restore runbook, Redis persistence (AOF).
+- **High Availability:** single-instance compose. Add multi-replica API, connection pooling (PgBouncer), Redis cluster, health-based load balancing, graceful shutdown.
+- **Load testing:** none. Add k6/Artillery for event ingest + list endpoints at target EPS; tune indexes/cursors.
+- **Containerization:** API Dockerfile exists; **no web Dockerfile / production build**; add multi-stage web image or Cloudflare Pages pipeline (wrangler config incomplete; `src/server.ts` referenced).
+- **Migration governance:** hand-maintained schema.ts vs SQL — adopt drizzle-kit generate/check in CI; fix existing drift.
+- **Config/secrets:** secrets manager; per-env config; rotate JWT/LLM keys.
+
+---
+
+# PART 10 — MISSING AI FEATURES
+
+- **UI but no/weak backend:** `/ai/hunt-assist` (static templating → needs LLM); incident postmortem (static template → LLM); recommendations confidence hardcoded.
+- **Backend but no UI:** `POST /v1/ai/score/rescore` (admin) has no surfaced control.
+- **Mock/static responses:** Copilot **fallback** when no API key (canned text); hunt-assist suggestions.
+- **Missing LLM integration:** tool-calling workflows (isolate host, create incident, draft runbook) per `copilot_workflow` enum; Anthropic provider (default to latest Claude per stack guidance).
+- **Missing embeddings:** no embedding pipeline; `EMBEDDING_MODEL` configured but unused.
+- **Missing vector search:** pgvector extension + `document_embeddings` table **commented out** in `002_rls_and_rag.sql`; RAG is keyword `ILIKE`.
+- **Missing context retrieval:** RAG retrieves only KB + incidents by title match; no runbooks/closed-incident summaries, no permission-filtered citations, no chunking.
+- **Missing safety/ops:** PII redaction + prompt-injection guard exist (basic); missing per-org token budgets, cost metering, model pinning surfaced, degraded-mode tests.
+
+---
+
+# PART 11 — MISSING PAGES AUDIT
+
+| Module | Page (route) | Exists | Missing Components | Completion % |
+|---|---|---|---|---|
+| Dashboard | /dashboard | ✅ | drill-downs; real financial/SLA/MTTD | 85 |
+| Executive | /executive | ✅ | real financial/sla metrics | 70 |
+| Events | /events | ✅ | bulk actions, export | 85 |
+| Hunt | /hunt | ✅ | save/schedule query, real anomalies | 65 |
+| Alerts | /alerts | ✅ | rule/policy/routing/channel forms; real engine | 60 |
+| Detection Rules | /detection-rules | ✅ | edit/delete, test modal, import dialog | 65 |
+| Incidents | /incidents | ✅ | create/edit/delete, bulk, filters | 70 |
+| Incident Detail | /incidents/$id | ✅ | real responders/SLA/escalations, evidence upload, LLM postmortem | 65 |
+| Cases | /cases | ✅ | detail, evidence/tasks/activity/watchers, forms | 55 |
+| Investigations | /investigations | ✅ | notebook editor, evidence/entities, remove mock | 55 |
+| Vulnerabilities | /vulnerabilities | ✅ | detail, exception, bulk, per-tenant status | 65 |
+| Endpoints | /endpoints | ✅ | detail w/ real forensics, unisolate/scan | 60 |
+| Forensics | (endpoint detail) | 🔴 | entirely real data | 15 |
+| Threat Intel | /threat-intelligence | ✅ | IOC CRUD, real ransomware/campaigns | 60 |
+| Cloud Security | /cloud-security | ✅ | connect/sync/resolve, wizard | 70 |
+| Network | /network | ✅ | filters, mark-malicious, ingestion | 65 |
+| Identity | /identity | ✅ | resolve anomaly, real risk | 60 |
+| Attack Graph | /attack-graph | ✅ | generate/replay | 65 |
+| Security Graph | /security-graph | 🔴 | real graph API | 25 |
+| Attack Replay | /attack-replay | 🔴 | real API | 15 |
+| Threat Simulation | /threat-simulation | 🔴 | engine + API | 10 |
+| Digital Twin | /digital-twin | 🔴 | topology API | 20 |
+| Timeline | /timeline | 🟡 | unified API | 40 |
+| Compliance | /compliance | ✅ | detail, control update, evidence, create | 45 |
+| Reports | /reports | ✅ | schedules, formats, async, delivery | 55 |
+| Copilot | /copilot | ✅ | vector RAG, tools, citations | 65 |
+| Knowledge | /knowledge | ✅ | edit/delete/bookmark | 70 |
+| Automation/Runbooks | /automation | ✅ | builder, execute, history, create onClick | 45 |
+| Developer | /developer | ✅ | webhook edit/test, delivery log, rotate | 65 |
+| Notifications | /notifications | ✅ | producers, sync local store, settings | 60 |
+| Audit | /audit | ✅ | filters/export | 80 |
+| Policies | /policies | ✅ | create/edit/delete, real violations | 50 |
+| Platform Health | /platform-health | ✅ | real uptime | 70 |
+| Status | /status | 🔴 | services/regions/maintenance API | 30 |
+| Organizations | /organizations | 🟡 | wire to users API (drop accounts-store), invite | 35 |
+| Profile | /profile | 🔴 | wire sessions/devices/PAT to API | 25 |
+| Settings | /settings | 🟡 | preferences API | 35 |
+| Identity/SSO | /sso | 🔴 | SSO backend + forms | 10 |
+| Access Matrix | /access-matrix | 🔴 | persistence (read-only viz) | 40 |
+| Ownership | /ownership | 🟡 | verify data source | 40 |
+| Billing | /billing | 🔴 | billing backend | 5 |
+| Onboarding | /onboarding | 🔴 | onboarding backend | 15 |
+| Query | /query | 🟡 | verify wired to events | 50 |
+| Landing/Login/Index | / , /login, /landing | ✅ | password reset, SSO buttons | 85 |
+
+---
+
+# PART 12 — MISSING WORKFLOW AUDIT
+
+For each: **Current → Missing/Broken/Manual → Automation needed.**
+
+- **Events:** ingest is **manual/seeded** (no ingestion API/agent) → add `POST /v1/ingest/events` (API-key scoped) + WS push. Suppress/create-incident work.
+- **Alerts:** alerts exist but **rules never auto-fire** them from events (no engine) → detection-rule evaluation worker; escalation/routing/channels are static → real config + dispatch.
+- **Incidents:** create from event/alert ✅; **manual create missing**; SLA/responders/escalations fake → real persistence + SLA breach automation + notification fan-out.
+- **Cases:** CRUD ✅; evidence/tasks/activity/links missing → sub-resource tables + UI; auto-link from incidents/alerts.
+- **Investigations:** notebook + notes ✅; evidence/entities/AI-summary missing; mock fallback present → finish detail editor + LLM summary.
+- **Vulnerabilities:** list/patch ✅; **no CVE feed sync**, global status bug → feed importer cron + per-tenant status + exceptions.
+- **Threat Hunting:** run ✅; **save/schedule missing**, anomalies static → persistence + scheduled runs + real anomaly compute.
+- **Endpoints:** isolate ✅; **forensics static**, no telemetry ingestion, no unisolate → real EDR ingestion + forensics + actions.
+- **Cloud Security:** read ✅; **no sync** → connector + scheduled sync + finding resolution.
+- **Threat Intel:** read ✅; **IOC write + feeds missing** → IOC CRUD + feed importer; campaigns/ransomware real.
+- **Compliance:** read ✅; **control updates/evidence missing** → control workflow + score recompute + frameworks seed.
+- **Reports:** create+CSV ✅; **status never advances, no schedule/async/delivery** → generation worker + scheduler + formats + delivery.
+- **Copilot:** chat ✅; **no vector RAG, no tools** → embeddings + tool-calling + budgets.
+- **Runbooks/SOAR:** assign ✅; **no execution engine** → step runner + execution log + triggers.
+- **Notifications:** list/read ✅; **nothing produces notifications** → event-driven producers + WS push + preferences routing.
+
+---
+
+# FINAL DELIVERABLES
+
+## 1. Backend Completion Checklist
+- [ ] Detection-rule **evaluation engine** + scheduler (alerts auto-fire).
+- [ ] Alert escalation-policies / routing-rules / notification-channels CRUD + dispatch.
+- [ ] Incident: create/edit/delete, real responders + escalations + SLA service + breach watcher, evidence upload (S3), LLM postmortem, fix list N+1.
+- [ ] Cases: evidence/tasks/activity/watchers/links services + endpoints; `act:cases` perms.
+- [ ] Investigations: evidence/entities/ai-summary; fix write perms.
+- [ ] Vulnerabilities: per-tenant status, detail, exceptions, CVE/EPSS sync cron.
+- [ ] Endpoints/Forensics: real ForensicsService, telemetry ingestion, unisolate/scan.
+- [ ] Cloud: connector + scheduled sync + resolve.
+- [ ] Network: ingestion + mark-malicious + aggregations.
+- [ ] Threat-intel: IOC CRUD + feeds; real ransomware/campaigns.
+- [ ] Compliance: detail/create/control-update/evidence + score recompute.
+- [ ] Reports: async generation worker, schedules, formats, delivery, status lifecycle.
+- [ ] Copilot/AI: pgvector + embeddings + vector RAG, LLM hunt-assist/recommendations/postmortem, tool-calling, budgets.
+- [ ] Developer: webhook **delivery worker** (HMAC, retry, SSRF allowlist), API-key enforcement, rotation.
+- [ ] Notifications: event-driven producers + WS push.
+- [ ] Users/Orgs: org update, sessions/devices/PAT, invite, anomaly resolve, MFA/SSO.
+- [ ] Cross-cutting: BullMQ + Redis worker process; event bus; idempotency middleware; API-key middleware; RLS connection pinning; per-key rate limiting; centralized audit; fix all `view:`→`act:`/`manage:` perms.
+- [ ] DTOs/validators/mappers in `@nexus/shared` for all new endpoints.
+
+## 2. Frontend Completion Checklist
+- [ ] All forms in PART 4 (create/edit/delete/assign/escalate/close/evidence/tasks across modules).
+- [ ] Detail pages/drawers: case detail, investigation notebook editor, endpoint detail (real forensics), vuln detail, compliance assessment detail.
+- [ ] Wire static/local pages to real APIs: status, digital-twin, security-graph, attack-replay, threat-simulation, timeline, sso, billing, onboarding.
+- [ ] Replace local-only stores with API: organizations (accounts-store→users), profile (profile-store→sessions/devices/PAT), workspace, preferences, correlation, collaboration, incident overrides→mutations.
+- [ ] Remove mock fallbacks: incidents detail MOCK_*, alerts static panels, investigations array, policies category arrays, threat-intel static, dashboard hardcoded metrics.
+- [ ] Bulk actions (incidents/alerts/cases/vulns), advanced filters, sorting controls, pagination on list pages.
+- [ ] WS subscriptions for incident/alert/case/notification changes; optimistic updates; real stream stats.
+- [ ] Wizards: cloud connect, onboarding, compliance create, report schedule, detection-rule template.
+
+## 3. Database Completion Checklist
+- [ ] New tables: `hunt_queries`, `escalation_policies`, `routing_rules`, `notification_channels`, `incident_responders`(real)+RLS, `incident_escalations`, `sla_policies`, `case_evidence`, `case_tasks`, `case_activity`, `case_watchers`, `case_incidents`/`case_alerts`, `investigation_evidence`, `investigation_entities`, `ransomware_groups`, `threat_campaigns`, `cloud_compliance_checks`, `compliance_evidence`, `report_deliveries`, `knowledge_bookmarks`, `personal_access_tokens`/`user_devices`, `platform_services`, `platform_regions`, `maintenance_windows`, `document_embeddings`(pgvector), SaaS: `plans`, `subscriptions`, `invoices`, `usage_counters`, `sso_providers`.
+- [ ] Enable pgvector extension + FTS indexes (currently commented out in `002_rls_and_rag.sql`).
+- [ ] RLS on child tables: `incident_*`, `cloud_assets`, `cloud_iam_findings`, `attack_graph_nodes/edges`, `runbook_steps`, `compliance_controls`, `copilot_messages`, `webhook_deliveries`.
+- [ ] Indexes: `security_events(org,severity)`, `incidents(org,severity)`, `endpoints(org,status)`, `network_flows(org,is_malicious)`, `asset_vulnerabilities(org,status)`.
+- [ ] Reconcile schema.ts ↔ migrations drift (MFA/SSO/lockout on users; SLA/isolation/closed_at on incidents/endpoints/alerts) via drizzle-kit; move vuln patch_status to `asset_vulnerabilities`.
+
+## 4. Integration Completion Checklist
+- [ ] Connector interface + per-provider connectors (Slack, Teams, AWS, GCP, Azure, CrowdStrike/SentinelOne, Jira/ServiceNow, threat feeds).
+- [ ] Outbound webhook delivery worker + `webhook_deliveries` population + retry + HMAC + SSRF allowlist.
+- [ ] Inbound ingestion APIs (`/v1/ingest/events`, endpoint telemetry) with API-key scopes.
+- [ ] Scheduled sync jobs per integration; `last_sync_at`/`last_error`/`events_ingested` updated; secret encryption.
+- [ ] Connect/edit/test/remove UI + sync status surfacing.
+
+## 5. Production Readiness Checklist
+- [ ] Tests: Vitest unit/integration (Testcontainers), Playwright E2E, contract tests; coverage gate.
+- [ ] CI/CD: GitHub Actions (tsc, lint, test, build, migrate-check, deploy).
+- [ ] Observability: structured logs, Prometheus metrics, OTel tracing, Sentry, dashboards/alerts.
+- [ ] Backups/DR: managed Postgres PITR, backup schedule, restore runbook, Redis persistence.
+- [ ] HA: multi-replica API, PgBouncer, Redis cluster, graceful shutdown, LB health.
+- [ ] Load testing (k6) + index/cursor tuning.
+- [ ] Web production Dockerfile / Cloudflare Pages pipeline; complete `wrangler`/`src/server.ts`.
+- [ ] Secrets manager; per-env config; remove demo-password fallback; rotate keys.
+- [ ] Worker process for queues; idempotency; rate-limit per key.
+
+## 6. Final Completion %
+
+| Area | % | Rationale |
+|---|---|---|
+| **Frontend** | **70%** | All pages scaffolded + most data wired; missing forms/detail/bulk/wizards; several static/local pages. |
+| **Backend** | **65%** | Most modules real CRUD; missing engines (detection/SLA/sync/delivery), some fake (forensics/hunt-static/responders), perm bugs. |
+| **Database** | **70%** | Rich schema + partial RLS + indexes; child-table RLS gaps, drift, ~20 missing tables, pgvector off. |
+| **Security** | **55%** | RBAC+RLS+audit+helmet present; perm mismatches, RLS pinning risk, no secret encryption/MFA/SSO, demo passwords. |
+| **Integrations** | **15%** | CRUD stubs only; no connectors, no webhook delivery, no sync. |
+| **AI** | **45%** | Copilot real (keyed) + sessions; keyword RAG (no vectors), heuristic/static `/ai/*`, no tools/embeddings. |
+| **SaaS** | **10%** | No signup/billing/plans/metering/trial/license/tenant-lifecycle; onboarding+billing UI-only. |
+| **DevOps** | **20%** | compose + API Dockerfile + migrate runner; no CI, web image, observability, backups, HA. |
+| **Testing** | **2%** | Zero tests. |
+| **Overall Platform** | **~48%** | Strong vertical-slice foundation and broad UI; not production-ready — engines, integrations, SaaS, security hardening, tests, and ops are the bulk of remaining work. |
+
+---
+
+## Verification (how to confirm completion as work lands)
+- `tsc --noEmit` both projects (0 errors) + `npm run lint`.
+- `npm run db:migrate` applies new migrations cleanly; drizzle-kit check shows no drift.
+- Vitest: RLS isolation test (two orgs can't see each other's rows), audit-on-mutation, mapper round-trips.
+- Playwright E2E for each core workflow (event→incident→investigation; alert→escalate; case lifecycle; report schedule→delivery; copilot RAG with citations).
+- Manual: each previously-static page now shows DB data and persists across refresh; webhook test delivers; detection rule fires an alert; SLA breach escalates; tenant export produces a file.
+
+
+
+
+
+
+
+plan --2---
+
+# NEXUS — MASTER COMPLETION BLUEPRINT (CTO Execution Plan)
+
+> Final execution blueprint to take NEXUS from current state (~48% complete) to a fully completed,
+> enterprise-grade, production-ready, commercially-sellable AI-native SOC platform competitive with
+> CrowdStrike Falcon, Microsoft Sentinel, Splunk ES, Elastic Security, Wiz, Palo Alto Cortex, SentinelOne.
+> Source of truth: `PLAN.md.txt` audit (left unedited), PROJECT-DOCUMENTATION.md, ARCHITECTURE-DEEP-DIVE.md,
+> verified code (33 backend modules, 45+ routes, 49 Drizzle tables, 11 migrations, ~98 hooks).
+> Scope = only work to complete the *existing* architecture/vision. No new feature ideas.
+
+**Effort key:** S ≤1d · M 2–3d · L 5–8d · XL 10–15d · XXL >15d. Engineer-days assume one mid/senior eng.
+**Priority key:** P0 blocker (security/data-integrity/build) · P1 core workflow · P2 completeness · P3 polish.
+**Canonical code patterns to reuse for every item** (verified): service class `(db, pgClient)` + `withTenant(client, orgId, fn)` + `mapX()` + audit insert (`cases.service.ts`); routes `authGuard(app.env, "<perm>")` + inline Zod + `getUser(req)` (`cases.routes.ts`); migration `CREATE TABLE … ENABLE ROW LEVEL SECURITY … CREATE POLICY x_org_policy USING (organization_id::text = current_setting('app.current_org', true))` (`009_investigation_notes.sql`); Drizzle `pgTable` (`schema.ts`); hooks `useQuery/useMutation` + `qc.invalidateQueries` (`api-hooks.ts`); permissions (`src/lib/rbac.ts`); env (`apps/api/src/config/env.ts`); register (`modules/register.ts`).
+
+---
+
+# DELIVERABLE 1 — COMPLETE PROJECT BREAKDOWN STRUCTURE
+
+### 1.1 Per-module completion matrix
+
+| Module | Overall | Backend | Frontend | Database | Security | Prod-Ready |
+|---|---|---|---|---|---|---|
+| Auth / Sessions | 65 | 75 | 70 | 70 | 45 | 30 |
+| Events | 80 | 85 | 85 | 80 | 65 | 35 |
+| Hunt | 60 | 55 | 65 | 60 | 60 | 25 |
+| Alerts | 60 | 60 | 55 | 65 | 55 | 25 |
+| Detection Rules | 55 | 55 | 60 | 65 | 45 | 20 |
+| Incidents | 68 | 70 | 65 | 65 | 60 | 35 |
+| Cases | 55 | 60 | 50 | 45 | 55 | 30 |
+| Investigations | 55 | 60 | 50 | 55 | 45 | 30 |
+| Vulnerabilities | 62 | 65 | 60 | 55 | 50 | 30 |
+| Endpoints/Forensics | 45 | 45 | 50 | 45 | 55 | 25 |
+| Threat Intel | 58 | 55 | 60 | 55 | 60 | 30 |
+| Cloud Security | 62 | 60 | 70 | 60 | 50 | 30 |
+| Network | 60 | 55 | 60 | 60 | 60 | 30 |
+| Attack/Security Graph | 45 | 45 | 40 | 55 | 60 | 25 |
+| Compliance | 45 | 40 | 45 | 55 | 55 | 25 |
+| Reports | 55 | 55 | 55 | 60 | 55 | 25 |
+| Copilot / AI | 50 | 50 | 60 | 35 | 50 | 25 |
+| Runbooks / SOAR | 40 | 35 | 45 | 55 | 50 | 20 |
+| Knowledge | 70 | 70 | 70 | 70 | 55 | 35 |
+| Developer (keys/webhooks) | 55 | 50 | 60 | 60 | 45 | 25 |
+| Notifications | 55 | 45 | 60 | 70 | 60 | 30 |
+| Users / Orgs / Identity | 50 | 55 | 35 | 60 | 50 | 30 |
+| Policies | 50 | 55 | 50 | 65 | 50 | 25 |
+| Dashboard / Executive | 80 | 75 | 85 | 75 | 65 | 40 |
+| Platform Health / Status | 45 | 45 | 40 | 50 | 60 | 30 |
+| Search | 60 | 55 | 65 | 55 | 60 | 30 |
+| Realtime / WS | 55 | 55 | 60 | n/a | 55 | 25 |
+| Integrations | 15 | 15 | 25 | 40 | 30 | 10 |
+| SaaS / Billing | 8 | 5 | 10 | 5 | 20 | 5 |
+| DevOps / Infra | 20 | — | — | — | 35 | 20 |
+| Testing | 2 | — | — | — | — | 2 |
+| **PLATFORM** | **48** | **62** | **66** | **66** | **53** | **27** |
+
+### 1.2 Missing implementation artifacts (grouped; each has Priority · Effort · Depends-on)
+
+**Missing Controllers/Services** (file: `apps/api/src/modules/<mod>/<mod>.service.ts`)
+- `DetectionRuleEngine` — P0 · L(8d) · dep: worker infra, security_events. Auto-fire alerts from rules.
+- `SlaService` + breach watcher — P1 · M(4d) · dep: sla_policies table, worker.
+- `NotificationProducerService` — P1 · M(3d) · dep: event bus, WS.
+- `WebhookDeliveryService` — P1 · M(4d) · dep: worker, webhook_deliveries.
+- `ReportGenerationService` (async) + `ScheduledReportsService` — P1 · L(6d) · dep: worker, S3, cron.
+- `CaseEvidenceService/CaseTaskService/CaseActivityService/CaseWatcherService/CaseLinkService` — P1 · L(6d) · dep: case_* tables.
+- `IncidentResponderService`/`IncidentEscalationService` (real) — P1 · M(3d) · dep: tables.
+- `InvestigationEvidenceService/InvestigationEntityService` — P2 · M(3d).
+- `ForensicsService` (real) — P1 · L(6d) · dep: endpoint_* tables + ingestion.
+- `RansomwareService/CampaignService/IocWriteService` — P2 · M(4d).
+- `CloudConnectorService`+`CloudSyncService` — P1 · XL(10d) · dep: SDKs, worker, crypto.
+- `NetworkIngestService` — P2 · M(3d) · dep: api-key mw.
+- `ComplianceWriteService` + score recompute — P2 · L(5d).
+- `RunbookExecutionService` + action handlers — P1 · L(6d) · dep: worker.
+- `HuntQueryService`/`AnomalyService` — P2 · M(4d) · dep: hunt_queries, worker.
+- `EscalationPolicy/RoutingRule/NotificationChannelService` — P2 · L(5d).
+- `AttackGraphGenerator/SecurityGraphService/ThreatSimulationService` — P2 · L(8d).
+- `EmbeddingService/VectorRagService` — P1 · L(8d) · dep: pgvector.
+- `TopologyService/TimelineService` — P3 · M(3d).
+- `BillingService/UsageMeteringService/OnboardingService/SignupService/SsoService/MfaService` — P1 · XXL(20d) · dep: Stripe, schema.
+- `StorageService(S3)/CryptoService/QueueService/SchedulerService/EventBus` (lib) — P0 · L(7d).
+
+**Missing Routes** (add to `<mod>.routes.ts` + `register.ts`): see Deliverable 4 §full list. Highest-priority P0/P1: `DELETE /v1/detection-rules/:id`; `POST/PATCH/DELETE /v1/incidents[/:id]` + `/:id/evidence`; case sub-resources; `POST /v1/cloud/accounts|/:id/sync`; `POST /v1/runbooks/:id/execute`; `POST /v1/hunt/queries`; `POST /v1/ingest/{events,endpoint-telemetry,network-flows,dns}`; `PATCH /v1/orgs/current`; `POST /v1/users/invite`; `POST /v1/signup`; `POST /v1/billing/checkout` + `/webhook`; webhook `test`/`deliveries`; compliance `assessments/:id` + `controls/:id`.
+
+**Missing Workers** (new `apps/api/src/worker.ts` + jobs): detection-eval · sla-watch · report-gen · scheduled-reports · webhook-deliver · cloud-sync · feed-sync (IOC/CVE) · endpoint-telemetry-ingest · embeddings-index · notification-fanout · retention-purge · score-recalibrate · tenant-export · tenant-purge. — P0/P1 · each S–M · dep: BullMQ infra.
+
+**Missing Cron Jobs** (BullMQ repeatable in `scheduler.ts`): detection-eval (per `run_frequency_minutes`) · sla-watch (1m) · scheduled-reports (cron per row) · cloud-sync (15m) · CVE/EPSS feed (daily) · IOC feed (hourly) · embeddings backfill (nightly) · score recalibrate (nightly) · retention purge (daily) · trial-expiry (daily). — P1 · S each.
+
+**Missing Queue Consumers:** one consumer per worker job above (same list). — P1.
+
+**Missing DTOs / Validators** (in `packages/shared/src/schemas`): create/update/query schemas for every new endpoint (currently inline + ad-hoc). Define `*.create.ts`, `*.update.ts`, `*.query.ts`, `*.response.ts` per module. — P2 · ongoing (~10d total).
+
+**Missing Middleware** (`apps/api/src/middleware/`): `api-key.ts` (P0·M), `idempotency.ts` (P2·S), `quota.ts` (P1·M), tenant-context pinning rewrite in `lib/tenant.ts` (P0·M), per-key rate-limit (P1·S).
+
+**Missing Permissions** (`src/lib/rbac.ts` already has `manage:cases/sso/policies`,`view:policies`,`manage:knowledge`; add + wire to DB role seed + route guards): `act:investigations`, `manage:detection-rules`, `act:reports`/`manage:reports`, `act:automation`/`manage:automation`, `manage:billing`(exists), `ingest:events`/`ingest:telemetry` (API-key scopes). — P0 · S.
+
+**Missing Audit Logs:** dashboard/AI read paths fine; ensure responder/escalation/cloud-sync/runbook-exec/billing/signup/tenant-delete all emit `auditLogs`; route Organizations/Profile through API so they're audited. — P1 · S (distributed).
+
+**Missing WebSocket Events** (`realtime/websocket.routes.ts` → push, not just poll): `incident.updated`, `alert.created`, `alert.updated`, `case.updated`, `notification.created`, `sla.breached`, `runbook.execution`. Add channel subscription + bus bridge. — P1 · M(3d).
+
+**Missing Database Tables** (Deliverable 5): ~30 (case_*, incident_responders/escalations, sla_policies, investigation_evidence/entities, endpoint_processes/network/file/binaries, ransomware_groups/threat_campaigns/campaign_actors, hunt_queries, escalation_policies/routing_rules/notification_channels, runbook_executions, scheduled_reports, webhook_deliveries, compliance_evidence/control_templates, knowledge_bookmarks, user_preferences/personal_access_tokens/user_devices, platform_services/regions/maintenance_windows, document_embeddings, plans/plan_features/subscriptions/invoices/usage_counters, email_verifications/password_reset_tokens, sso_providers). — P0–P2.
+
+**Missing Indexes:** `security_events(org,severity)`, `incidents(org,severity)`, `endpoints(org,status)`, `network_flows(org,is_malicious)`, `dns_queries(org,is_dga)`, `asset_vulnerabilities(org,status)`, `audit_logs(org,timestamp)`, `notifications(user,is_read)`, `document_embeddings` ivfflat. — P1 · S.
+
+**Missing RLS Policies:** child tables `incident_timeline/comments/evidence/recommendations`, `cloud_assets`, `cloud_iam_findings`, `attack_graph_nodes/edges`, `runbook_steps`, `compliance_controls`, `copilot_messages`, `webhook_deliveries`, plus all new tables. — P0 · M(3d).
+
+---
+
+# DELIVERABLE 2 — COMPLETE ENGINEERING ROADMAP (Phases 0–5)
+
+### PHASE 0 — Foundations & hardening (2–3 wks)
+- **Objectives:** make platform safe + give it the missing async backbone before feature work.
+- **Backend:** BullMQ `lib/queue.ts`/`worker.ts`/`scheduler.ts`; `lib/events-bus.ts`; `lib/storage.ts`(S3); `lib/crypto.ts`(AES-GCM); rewrite `lib/tenant.ts` (reserved/txn connection pinning); `middleware/api-key.ts`; centralize audit.
+- **Frontend:** error/empty/loading-state primitives audit; toast system; RHF+Zod form scaffolding shared.
+- **Database:** `010_child_table_rls.sql`; vuln per-tenant status migration; missing indexes; drizzle-kit `db:generate/db:check`; reconcile schema.ts↔SQL drift.
+- **Infrastructure:** GitHub Actions CI (tsc web+api, lint, drizzle-check, build); worker process in compose; env additions (Anthropic/Stripe/S3/SMTP/ENCRYPTION_KEY/SENTRY/OTEL).
+- **Testing:** Vitest+Testcontainers harness; first RLS-isolation + auth tests; Playwright skeleton.
+- **Security:** fix all `view:`→`act:`/`manage:` guards; remove demo-password fallback in prod; account lockout; RLS pinning.
+- **DoD:** worker boots + runs a no-op repeatable job; RLS isolation test passes for 2 orgs; CI green; child tables RLS-enabled.
+- **Exit:** zero P0 security items open; async infra usable by Phase 2.
+- **Risks:** connection-pinning refactor touches every service (regression risk) → land behind tests first.
+
+### PHASE 1 — Core workflow completeness (3–4 wks)
+- **Objectives:** finish the analyst day-to-day loops end-to-end with real persistence.
+- **Backend:** incidents create/edit/delete + real responders/escalations + evidence(S3) + N+1 fix; SLA service+watcher; cases sub-resources (evidence/tasks/activity/watchers/links); investigations evidence/entities; notification producers; knowledge edit/delete/bookmark.
+- **Frontend:** remove `MOCK_*` from incident detail + wire real; case detail page + tabs + forms; investigation notebook editor; create/edit/delete/bulk on incidents+cases; optimistic updates; WS push subscriptions.
+- **Database:** incident_responders/escalations, sla_policies, case_*, investigation_evidence/entities, knowledge_bookmarks.
+- **Infrastructure:** Sentry + pino structured logs wired.
+- **Testing:** integration tests for incident/case lifecycles; Playwright event→incident→investigation.
+- **Security:** evidence upload validation; per-key rate limit.
+- **DoD:** an analyst can create→assign→escalate→close an incident/case with evidence + tasks, all persisted + audited + live-updating.
+- **Exit:** no mock fallbacks in core workflow pages; core E2E green.
+- **Risks:** S3/storage availability in dev → provide MinIO in compose.
+
+### PHASE 2 — Detection, automation & engines (3–4 wks)
+- **Objectives:** alerts auto-fire, SOAR runs, reports/webhooks deliver.
+- **Backend:** DetectionRuleEngine + scheduler; escalation/routing/channel CRUD + dispatch; runbook execution engine + action handlers; webhook delivery worker; async report generation + scheduled reports; hunt save/schedule + real anomalies.
+- **Frontend:** alerts policy/routing/channel builders (drop static arrays); detection-rule edit/delete/test/import dialogs; runbook builder+execute+history; report generate/schedule forms; hunt save/schedule UI.
+- **Database:** escalation_policies/routing_rules/notification_channels, runbook_executions, scheduled_reports, webhook_deliveries, hunt_queries, alert_rules.last_run_at.
+- **Infrastructure:** queue depth metrics; dead-letter handling.
+- **Testing:** detection-engine unit tests; webhook HMAC + retry tests; report-gen tests.
+- **Security:** webhook SSRF allowlist; runbook destructive-action permission gating + human-in-loop.
+- **DoD:** a detection rule fires an alert from events; SLA breach auto-escalates + notifies; a scheduled report is generated + delivered; a webhook test delivers signed payload.
+- **Exit:** no static panels in alerts; SOAR demoable.
+- **Risks:** query-language for detection rules underspecified → start with the existing hunt field-filter parser as the rule DSL.
+
+### PHASE 3 — Telemetry, intel, AI depth (3–4 wks)
+- **Objectives:** real data ingestion + intelligent layer.
+- **Backend:** ingestion APIs (events/endpoint/network/dns, api-key scoped); real ForensicsService; threat-intel IOC writes + ransomware/campaigns; cloud connect/sync (AWS first); pgvector + embeddings + vector RAG; LLM hunt-assist/recommendations/postmortem; tool-calling workflows.
+- **Frontend:** endpoint detail w/ real forensics + unisolate/scan; IOC CRUD; cloud connect wizard + sync; copilot citations + workflow picker + budget display; threat-intel real data.
+- **Database:** endpoint_processes/network/file/binaries, ransomware_groups/threat_campaigns, document_embeddings(pgvector), cloud_compliance_checks.
+- **Infrastructure:** vector index tuning; LLM provider (Anthropic latest Claude default) keys via secrets.
+- **Testing:** AI eval harness (RAG citation accuracy, workflow correctness); ingestion load test.
+- **Security:** prompt-injection tests; secret encryption for connector creds; ingestion key scopes.
+- **DoD:** events flow in via API + stream live; copilot answers with citations from org KB/incidents; AWS account syncs assets/IAM.
+- **Exit:** forensics no longer static; RAG vectorized.
+- **Risks:** cloud SDK auth complexity → scope to read-only roles; per-provider behind connector interface.
+
+### PHASE 4 — SaaS commercialization (3–4 wks)
+- **Objectives:** make it sellable + multi-tenant self-service.
+- **Backend:** signup + org creation + email verify; plans/subscriptions/Stripe + webhook; usage metering + quota middleware; trials; onboarding backend; tenant export/delete; SSO (SAML/OIDC) + MFA.
+- **Frontend:** signup page; billing (real plan/usage/invoices); onboarding submit actions; org settings + invite; SSO setup wizard + MFA enroll; admin portal.
+- **Database:** plans/plan_features/subscriptions/invoices/usage_counters, email_verifications/password_reset_tokens, sso_providers, organizations.deleted_at.
+- **Infrastructure:** Stripe webhooks endpoint; transactional email (SMTP/provider).
+- **Testing:** signup→trial→subscribe→quota-breach E2E; tenant-isolation under billing.
+- **Security:** SSO assertion validation; quota bypass tests; PII export controls.
+- **DoD:** a new customer self-signs-up, gets a trial, hits a quota, upgrades via Stripe, invites teammates, can export/delete their tenant.
+- **Exit:** billing/onboarding no longer mock.
+- **Risks:** Stripe sandbox + tax/compliance → use Checkout + Billing Portal (hosted) to minimize PCI scope.
+
+### PHASE 5 — Integrations, observability, GA hardening (4–6 wks)
+- **Objectives:** ecosystem connectors + production operations + launch readiness.
+- **Backend:** connector framework + Slack/Teams/AWS/GCP/Azure/CrowdStrike/Defender/Sentinel/Elastic/Splunk/VirusTotal/Recorded Future/AbuseIPDB/Jira/ServiceNow/Email/SMS; status/topology/timeline real APIs; attack-graph generate + simulation.
+- **Frontend:** integrations connect/test/sync UI; status/digital-twin/security-graph/attack-replay/threat-simulation/timeline wired; a11y + mobile responsiveness pass across all routes.
+- **Database:** integration sync state + external_ref columns; platform_services/regions/maintenance_windows; kpi_snapshots (optional for dashboard financial/SLA).
+- **Infrastructure:** Prometheus + OTel + dashboards/alerts; PITR backups; HA (replicas, PgBouncer, Redis persistence); web prod image / Cloudflare Pages; load tests.
+- **Testing:** full E2E suite; security/pen test; chaos + RLS fuzz; coverage gate ≥70% services.
+- **Security:** full Deliverable 6 closure; pen-test remediation; SOC2-evidence audit-log immutability.
+- **DoD:** all advertised integrations sync; all pages on real data; SLOs + dashboards live; backups restore-tested; load targets met.
+- **Exit:** GA checklist (Deliverable 12) all green.
+- **Risks:** integration surface is large → prioritize Slack+AWS+Jira+VirusTotal for MVP-commercial, others fast-follow within architecture.
+
+---
+
+# DELIVERABLE 3 — COMPLETE FRONTEND BUILD PLAN (per route)
+
+Conventions: forms = shadcn `Dialog`+`Form`+RHF+Zod(shared)+mutation hook(`isPending` disable)+toast; tables = existing data-table pattern + column sort + cursor pagination; every list needs EmptyState/ErrorBoundary/LoadingSkeleton (primitives exist in ux-utilities — apply consistently); RBAC = gate action buttons with `can(role, perm)`; a11y = labels/roles/focus-traps/keyboard; mobile = responsive grid + drawer nav. Files in `src/routes/`. New shared components in `src/components/`.
+
+- **`_app.dashboard.tsx`** — Existing: KPI cards, live feed, export. Missing: drill-down modals, real financial/SLA/MTTD binding, loading skeletons per card. Hooks: existing. Components: `<KpiDrilldownDialog>`. API: dashboard (fix mock metrics).
+- **`_app.events.tsx`** — Missing: bulk-select toolbar, bulk suppress/create-incident, export button, saved-filter chips. Components: `<EventBulkActions>`, `<ExportEventsButton>`. Hooks: `useBulkSuppressEvents`, `useExportEvents`. 
+- **`_app.hunt.tsx`** — Missing: Save-query form + Save wiring, Schedule modal, saved-query table, run-history. Components: `<SaveHuntQueryDialog>`,`<ScheduleHuntDialog>`,`<SavedQueriesTable>`. Hooks: `useSaveHuntQuery/useScheduleHuntQuery/useHuntQueries`.
+- **`_app.alerts.tsx`** — Existing: alert list + suppression CRUD hooks. Missing: drop static `SUPPRESSIONS/ESCALATION_CHAIN/ROUTING_RULES/CHANNELS`; Suppression create/edit form, Escalation-policy builder, Routing-rule builder, Channel config form, bulk ack. Components: `<SuppressionRuleForm>`,`<EscalationPolicyBuilder>`,`<RoutingRuleBuilder>`,`<ChannelConfigForm>`. Hooks: escalation/routing/channel CRUD.
+- **`_app.detection-rules.tsx`** — Missing: Edit form, Delete confirm, Test-results modal, Import file dialog, Use-Template prefill, enable/disable toggle wiring. Components: `<DetectionRuleForm>`,`<RuleTestResultModal>`,`<ImportRulesDialog>`. Hooks: `useUpdateAlertRule(exists)`,`useDeleteDetectionRule`,`useTestDetectionRule(fix invalidate)`.
+- **`_app.incidents.tsx`** — Missing: Create form, Edit modal, Delete confirm, bulk status/assign/close, advanced filters, replace `incident-store` overrides with mutations. Components: `<IncidentForm>`,`<IncidentBulkBar>`,`<IncidentFilters>`. Hooks: `useCreateIncident/useUpdateIncident/useDeleteIncident`.
+- **`_app.incidents.$incidentId.tsx`** — Missing: delete `MOCK_RESPONDERS/MOCK_SLA/MOCK_ESCALATIONS/MOCK_REMEDIATIONS`; Manage-responders form, Evidence upload dialog, SLA editor, LLM postmortem wiring, real escalations panel. Components: `<ManageRespondersDialog>`,`<EvidenceUploadDialog>`,`<SlaEditor>`. Hooks: real responders/escalations/SLA + `useAddIncidentEvidence`.
+- **`_app.cases.tsx`** — Missing: detail page/drawer, Create/Edit/Close forms, Evidence/Tasks/Activity/Watchers tabs, Link picker, bulk assign/close, remove `CASES` fallback. New file `_app.cases.$caseId.tsx`. Components: `<CaseForm>`,`<CaseEvidenceTab>`,`<CaseTasksTab>`,`<CaseActivityFeed>`,`<CaseWatchers>`,`<LinkEntityPicker>`. Hooks: case sub-resource set.
+- **`_app.investigations.tsx`** — Missing: delete `INVESTIGATIONS` array; notebook detail/editor page (`_app.investigations.$id.tsx`), Evidence/Entities panels, AI-summary button, Create/Delete. Components: `<NotebookEditor>`,`<InvestigationEvidence>`,`<EntityLinks>`. Hooks: evidence/entities/ai-summary.
+- **`_app.vulnerabilities.tsx`** — Missing: detail view, bulk patch/dismiss, Exception form, severity/exploit/EPSS filters. Components: `<VulnDetailDrawer>`,`<VulnExceptionForm>`,`<VulnFilters>`,`<VulnBulkBar>`. Hooks: `usePatchVulnerability(exists)`,`useVulnException`.
+- **`_app.endpoints.tsx`** — Missing: detail page (`_app.endpoints.$id.tsx`) real forensics/process-tree/network, unisolate/scan, filters, bulk isolate. Components: `<EndpointDetail>`,`<ProcessTree>`,`<NetworkConnections>`. Hooks: `useForensics(real)`,`useUnisolate/useScan`.
+- **`_app.threat-intelligence.tsx`** — Missing: IOC CRUD forms, IOC import, actor detail drawer, wire ransomware/campaigns to real API. Components: `<IocForm>`,`<IocImportDialog>`,`<ActorDrawer>`. Hooks: `useCreateIoc/useUpdateIoc/useDeleteIoc/useImportIocs`.
+- **`_app.cloud-security.tsx`** — Missing: Connect-account wizard, Resolve-finding action, per-account Sync, resource filters/bulk. Components: `<ConnectCloudWizard>`,`<ResolveFindingDialog>`. Hooks: `useConnectCloudAccount/useSyncCloudAccount/useResolveIamFinding`.
+- **`_app.network.tsx`** — Missing: flow filters (proto/malicious/geo), DNS filters (DGA/blocklist), mark-malicious, drill-down. Components: `<FlowFilters>`,`<FlowDetailDrawer>`. Hooks: `useMarkFlowMalicious`.
+- **`_app.attack-graph.tsx` / `_app.security-graph.tsx` / `_app.attack-replay.tsx` / `_app.threat-simulation.tsx`** — Missing: drop static NODES/EDGES; generate-graph action, replay controls, simulation config form + run; wire to APIs. Components: `<GenerateGraphDialog>`,`<SimulationConfigForm>`. Hooks: `useGenerateAttackGraph/useReplayGraph/useRunSimulation`.
+- **`_app.compliance.tsx`** — Missing: assessment detail page, Control-update UI, Evidence upload, Create-assessment wizard, framework picker, Export. New `_app.compliance.$id.tsx`. Components: `<AssessmentDetail>`,`<ControlRow>`,`<CreateAssessmentWizard>`. Hooks: `useAssessment/useUpdateControl/useAddComplianceEvidence/useCreateAssessment`.
+- **`_app.reports.tsx`** — Missing: Generate (type+params) form, Schedule form, format picker, preview, delivery config; drop fake blob. Components: `<GenerateReportForm>`,`<ScheduleReportForm>`. Hooks: `useCreateReport(exists)`,`useReportSchedules CRUD`.
+- **`_app.copilot.tsx`** — Missing: citations rendering, workflow picker, budget/usage display (degraded banner exists). Components: `<Citations>`,`<WorkflowPicker>`,`<UsageMeter>`.
+- **`_app.automation.tsx`** — Missing: "Create Workflow" onClick (none today), step builder, Execute, execution history. Components: `<RunbookBuilder>`,`<StepEditor>`,`<ExecutionHistory>`. Hooks: `useCreateRunbook/useExecuteRunbook/useRunbookExecutions`.
+- **`_app.knowledge.tsx`** — Missing: Edit/Delete, persist Bookmark. Hooks: `useUpdateKnowledge/useDeleteKnowledge/useBookmarkArticle`.
+- **`_app.developer.tsx`** — Missing: Webhook edit/test, delivery log view, key rotate, scope editor. Components: `<WebhookForm>`,`<DeliveryLog>`,`<ScopeEditor>`. Hooks: `useUpdateWebhook/useTestWebhook/useWebhookDeliveries/useRotateApiKey`.
+- **`_app.notifications.tsx`** — Missing: reconcile `notifications-store` with `useApiNotifications`, type filters, settings. 
+- **`_app.policies.tsx`** — Missing: drop category const arrays; Create/Edit/Delete forms, real violations panel. Components: `<PolicyForm>`. Hooks: `useCreatePolicy(exists)/useUpdatePolicy/useDeletePolicy`.
+- **`_app.status.tsx` / `_app.digital-twin.tsx`** — Missing: drop static SERVICES/REGIONS/MAINTENANCE/NODES/EDGES; wire to `/v1/status/*` + `/v1/topology`; maintenance-window admin form.
+- **`_app.timeline.tsx`** — Missing: wire to unified `/v1/timeline`; drop mock mix.
+- **`_app.organizations.tsx`** — Missing: replace `accounts-store` with users API; Invite/Edit/Delete-confirm/role-change-confirm forms. Hooks: `useOrgUsers/useCreateUser/useUpdateUser/useDeleteUser(exist)`,`useInviteUser`.
+- **`_app.profile.tsx`** — Missing: replace `profile-store` with API; Revoke Session/Trust Device/Create-Revoke PAT/OAuth toggles. Hooks: sessions/devices/tokens set.
+- **`_app.settings.tsx`** — Missing: wire `preferences-store` → `useUpdatePreferences`; org settings.
+- **`_app.sso.tsx`** — Missing: provider setup wizard, MFA/JIT/SCIM toggles → real API. Components: `<SsoSetupWizard>`. Hooks: SSO CRUD.
+- **`_app.billing.tsx`** — Missing: drop hardcoded plan/usage/invoices; plan change, payment method (Stripe portal), seat mgmt, real usage. Hooks: `useSubscription/useInvoices/useCheckout`.
+- **`_app.onboarding.tsx`** — Missing: all 5 steps need real submit (currently UI-only). Hook: `useCompleteOnboarding`.
+- **`_app.access-matrix.tsx` / `_app.ownership.tsx` / `_app.query.tsx`** — Missing: persistence/verify data source; wire query→events.
+- **`login.tsx` / `landing.tsx` / `signup.tsx`(new)** — Missing: password reset flow, SSO buttons, signup form.
+- **Cross-cutting FE:** a11y audit (axe) + mobile responsiveness pass on every `_app.*` route; route-level `ErrorBoundary`; consistent `PageSkeleton`/`EmptyState`; replace faked `useStreamStats.lagMs` (`Math.random()`); add `onMutate` optimistic updates (status/ack/mark-read/patch); new WS subscriptions (incident/alert/case/notification).
+
+---
+
+# DELIVERABLE 4 — COMPLETE BACKEND BUILD PLAN (per module + implementation order)
+
+For each: Routes → Service methods → Validators(Zod/shared) → Mappers(DTO) → Audit → Permission → WS → Jobs → Queries/Indexes → Perf/N+1 → Caching → RateLimit → Security. Reuse §0 patterns. **Implementation order = the numbered list (dependencies flow downward).**
+
+1. **lib/infra** (queue, worker, scheduler, events-bus, storage, crypto, tenant-pinning, api-key mw, idempotency, quota). Indexes none. Security: this *is* the security layer. — P0.
+2. **auth** — add `/forgot-password`,`/reset-password`,`/mfa/enroll`,`/mfa/verify`,`/sso/callback`; service: lockout, reset tokens, TOTP; audit login/lockout; tables password_reset_tokens, users.mfa_*/locked_until; rate-limit login. — P0/P1.
+3. **detection-rules + engine** — `DELETE /:id`; `DetectionRuleEngine.evaluateAll()`; job per `run_frequency_minutes`; dedup fingerprint; counters; WS `alert.created`; fix write perms→`manage:detection-rules`; index `alert_rules(org,is_enabled)`. — P0.
+4. **alerts** — escalation/routing/channel CRUD + dispatch; WS `alert.updated`; index `alerts(org,status,severity)`. — P1.
+5. **incidents** — `POST/PATCH/DELETE`, `/:id/evidence`(S3), real responders/escalations tables; `SlaService`+watcher job; LLM postmortem; **fix N+1** in `list()` via `json_agg`/grouped query; WS `incident.updated`; cache executive KPIs(Redis); index `incidents(org,severity)`. — P1.
+6. **notifications producer** — bus subscribers insert + WS `notification.created`; preferences routing; retention purge job. — P1.
+7. **cases** — sub-resource routes/services (evidence/tasks/activity/watchers/link/close); `manage:cases` perms; auto activity log; WS `case.updated`; index `case_*(case_id)`. — P1.
+8. **investigations** — evidence/entities routes; `/:id/ai-summary`(LLM); fix write perms→`act:investigations`. — P2.
+9. **runbooks** — `POST/PATCH/DELETE`, `/:id/execute`, steps CRUD, executions; `RunbookExecutionService` + handlers (notify/isolate[gated]/create-incident/http); async job; perm `manage:automation`. — P1.
+10. **reports** — async `ReportGenerationService` (CSV/PDF/JSON→S3, status lifecycle); `scheduled_reports` CRUD + cron; delivery (email/Slack); perm `manage:reports`. — P1.
+11. **developer/webhooks** — `WebhookDeliveryService` worker (HMAC, retry, SSRF allowlist, `webhook_deliveries`); `PATCH /webhooks/:id`,`/:id/test`,`/:id/deliveries`; api-key scope enforcement + rotation + per-key rate-limit. — P1.
+12. **hunt** — `hunt_queries` CRUD + run/schedule; `AnomalyService` (rolling baselines over security_events); jobs; drop static arrays. — P2.
+13. **vulnerabilities** — per-tenant status on `asset_vulnerabilities`; `GET /:id`, `/:id/exception`, bulk; CVE/EPSS feed job; index `asset_vulnerabilities(org,status)`. — P1/P2.
+14. **ingestion** — `POST /v1/ingest/{events,endpoint-telemetry,network-flows,dns}` (api-key scoped, idempotent); usage metering increment; bulk insert + WS. — P1.
+15. **endpoints/forensics** — real `ForensicsService` over endpoint_* tables; `/:id/unisolate`,`/:id/scan`,`/:id/processes`,`/:id/network`. — P1.
+16. **threat-intel** — IOC CRUD + import; `RansomwareService`/`CampaignService` (DB+seed); feed importer job. — P2.
+17. **cloud** — `POST /accounts`,`DELETE /:id`,`POST /:id/sync`,`PATCH /iam-findings/:id/resolve`; `CloudConnector`+`CloudSyncService` (AWS→GCP→Azure); creds encrypted; sync cron; RLS on cloud_assets/iam. — P1/P2.
+18. **network** — `PATCH /flows/:id`; aggregations (top-talkers/geo); indexes. — P2.
+19. **compliance** — `GET /:id`,`POST` create,`PATCH /controls/:id`,`/:id/evidence`; score recompute; control_templates seed; RLS controls. — P2.
+20. **attack-graph** — `POST` generate(from incident),`/:id/replay`; `SecurityGraphService`; `ThreatSimulationService`; RLS nodes/edges. — P2.
+21. **copilot/AI** — pgvector + `document_embeddings`; `EmbeddingService` + index jobs; `VectorRagService`; LLM `/ai/hunt-assist`,`/recommendations`,postmortem; Anthropic provider (latest Claude); tool-calling (isolate/create-incident/query) perm-gated; token budgets + metering; retention purge. — P1.
+22. **users/orgs/profile/preferences** — `PATCH /orgs/current`, invite, anomaly resolve, sessions/devices/PAT, preferences; tables user_preferences/personal_access_tokens/user_devices. — P1.
+23. **knowledge** — `PATCH/DELETE /:id`,`/:id/bookmark`. — P3.
+24. **dashboard/status/health/topology/timeline** — real SLA/MTTD; uptime from history; status tables; `/v1/topology`; unified `/v1/timeline`; cache KPIs. — P2/P3.
+25. **signup/billing/saas** — Deliverable 11. — P1.
+26. **integrations** — Deliverable 7 connector framework + connectors. — P1/P2.
+**Caching opportunities:** dashboard/executive KPIs (Redis, 30–60s), search FTS, threat-actor/ransomware reference data, plan/feature flags. **Rate limiting:** per-key on ingestion + developer; per-user on auth. **Perf:** incidents list N+1; cursor pagination on endpoints/vulns/network/threat-intel/cloud/search; FTS index for search (replace ILIKE).
+
+---
+
+# DELIVERABLE 5 — COMPLETE DATABASE BUILD PLAN
+
+### 5.1 Missing tables (with key columns; all tenant tables get `organization_id` FK + RLS unless noted)
+- `incident_responders`(incident_id FK, user_id, role, joined_at) · `incident_escalations`(incident_id, from_severity, to_severity, reason, escalated_by, created_at) · `sla_policies`(severity, target_minutes, escalation_minutes).
+- `case_evidence`/`case_tasks`(assignee_id,status,due_date)/`case_activity`(actor_id,action,detail)/`case_watchers`(user_id)/`case_incidents`/`case_alerts` (link).
+- `investigation_evidence`/`investigation_entities`(entity_type,entity_id).
+- `endpoint_processes`(pid,ppid,name,cmdline,user,started_at)/`endpoint_network_connections`(proto,local,remote,state,pid)/`endpoint_file_events`/`endpoint_binaries`(hash,signed,reputation).
+- `ransomware_groups`/`threat_campaigns`/`campaign_actors`(link).
+- `hunt_queries`(name,query,schedule_cron,last_run_at,created_by) · `hunt_anomalies`(optional).
+- `escalation_policies`/`routing_rules`(match jsonb,target)/`notification_channels`(type,config encrypted).
+- `runbook_executions`(runbook_id,status,started_at,finished_at,triggered_by,log jsonb).
+- `scheduled_reports`(report_type,cron,recipients,parameters,is_active,last/next_run_at) · `report_deliveries`(report_id,channel,status).
+- `webhook_deliveries`(webhook_id,event_type,payload,response_status,success,retry_count,delivered_at).
+- `compliance_evidence`(control_id,uri,note,added_by) · `control_templates`(framework,control_id,title,desc) [global].
+- `knowledge_bookmarks`(user_id,article_id).
+- `user_preferences`(user_id,notifications/security/ui jsonb) · `personal_access_tokens`(user_id,token_hash,scopes,expires_at) · `user_devices`(user_id,fingerprint,trusted,last_seen).
+- `platform_services`/`platform_regions`/`maintenance_windows`(starts_at,ends_at,desc) · `kpi_snapshots`(optional, for financial/SLA).
+- `document_embeddings`(source_type,source_id,chunk,embedding vector(1536)) [pgvector].
+- SaaS: `plans`(code,name,price_cents,limits jsonb)/`plan_features`/`subscriptions`(plan_id,status,trial_ends_at,current_period_end,stripe_*)/`invoices`/`usage_counters`(metric,period,value) · `email_verifications`/`password_reset_tokens` · `sso_providers`(type,metadata,config encrypted).
+
+### 5.2 Missing columns
+- `users`: mfa_enabled/mfa_secret/mfa_verified_at, sso_provider/sso_id, failed_login_count, locked_until, last_login_ip (most in 001_schema.sql, absent from schema.ts → reconcile).
+- `incidents`: sla_breached, sla_breach_at, contained_at/resolved_at/closed_at, postmortem_uri, escalated/escalated_at.
+- `alerts`: rule_id(FK alert_rules), endpoint_id, source_ip, dedup_key, suppression_reason.
+- `alert_rules`: last_run_at.
+- `asset_vulnerabilities`: patch_status, exception_reason, exception_expires_at.
+- `organizations`: deleted_at (soft delete), subscription_id, plan_code.
+- `platform_integrations`: external_ref/cursor for sync; `cases`/`incidents`: external_ref for ticketing sync.
+
+### 5.3 Missing constraints / relationships / FKs / uniques / checks
+- FKs (currently soft): `incidents.lead_investigator_id→users`, `cases.owner_id→users`, `investigation_notebooks.incident_id→incidents/case_id→cases`, `attack_graph_edges.source/target_node_id→attack_graph_nodes` — add as DEFERRABLE FKs (or keep soft if cross-tenant). 
+- Unique: `asset_vulnerabilities(organization_id,vulnerability_id,asset_id)`; `subscriptions(organization_id)`; `usage_counters(organization_id,metric,period)`; `knowledge_bookmarks(user_id,article_id)`.
+- Check: `severity IN (...)`, `status IN (...)`, `cvss 0–10`, `score_percent 0–100`, `confidence 0–100` — add CHECK constraints to enforce enums at DB.
+
+### 5.4 Missing composite indexes (hot paths)
+`security_events(org,severity)`, `security_events(org,type,event_timestamp)`, `incidents(org,severity)`, `incidents(org,status,updated_at)`, `alerts(org,status,ai_priority_score)`, `endpoints(org,status)`, `network_flows(org,is_malicious,flow_start)`, `dns_queries(org,is_dga)`, `asset_vulnerabilities(org,status)`, `audit_logs(org,timestamp)`, `notifications(user,is_read,created_at)`, `webhook_deliveries(webhook_id,delivered_at)`, `document_embeddings` ivfflat(embedding).
+
+### 5.5 Missing RLS policies
+All child tables (incident_*, cloud_assets, cloud_iam_findings, attack_graph_nodes/edges, runbook_steps, compliance_controls, copilot_messages, webhook_deliveries) + every new tenant table. For org-less child tables, use parent-join EXISTS policy or denormalize organization_id.
+
+### 5.6 Audit / history / soft-delete / retention
+- `audit_logs` exists → make append-only (revoke UPDATE/DELETE via policy) for SOC2; add export API.
+- History: add `*_history` (or `pgaudit`/temporal) for incidents/cases status changes if compliance requires; minimum: rely on timeline/activity tables.
+- Soft delete: add `deleted_at` to organizations, users, cases, incidents, knowledge_articles; filter in queries; hard-purge job after retention.
+- Retention: `data_retention_days` in `organizations.settings`; purge jobs for security_events, copilot_messages, audit_logs (respecting legal hold), webhook_deliveries.
+
+### 5.7 Migration order (sequential `database/migrations/NNN_*.sql`)
+`010_child_rls` → `011_user_security` (mfa/sso/lockout/reset/verify) → `012_incident_real` (responders/escalations/sla/cols) → `013_case_subresources` → `014_investigation_subresources` → `015_endpoint_telemetry` → `016_threat_intel` (ransomware/campaigns/ioc-write) → `017_hunt_queries` → `018_alert_policies` (escalation/routing/channels) → `019_runbook_executions` → `020_reports_schedules_deliveries` → `021_webhook_deliveries` → `022_compliance` (evidence/templates) → `023_knowledge_bookmarks` → `024_user_prefs_pat_devices` → `025_platform_status` → `026_pgvector_embeddings` → `027_vuln_per_tenant` → `028_saas_billing` → `029_soft_delete_retention` → `030_indexes_constraints`. Each: forward + matching `*.down.sql`.
+
+### 5.8 Rollback strategy
+Every migration ships a `.down.sql` (DROP TABLE/POLICY/INDEX/COLUMN in reverse); migrate runner (`scripts/migrate.ts`) extended to support `migrate:down` to the previous version; test up→down→up in CI on a Testcontainers DB; destructive column drops gated behind a two-phase (deprecate→remove) release.
+
+### 5.9 Dependency graph (build order)
+`organizations`→`roles`→`users`→(everything tenant). New: `sla_policies`→incident watcher; `alert_rules`→engine→`alerts`→`incidents`; `cases`→`case_*`; `investigation_notebooks`→`investigation_*`; `endpoints`→`endpoint_*`; `plans`→`subscriptions`→`invoices`/`usage_counters`; `document_embeddings` after pgvector ext; child RLS before any data path that bypasses parent joins.
+
+---
+
+# DELIVERABLE 6 — COMPLETE SECURITY HARDENING PLAN
+
+Format: Issue — Risk / Impact / Likelihood / Fix / Effort / Priority.
+
+- **Authentication** — Demo-password fallback + no lockout. R: credential bypass/brute force. I: full tenant compromise. L: High. Fix: remove fallback in prod, bcrypt-only, lockout via failed_login_count/locked_until, login rate-limit, password reset+verify. M · **P0**.
+- **MFA** — Columns exist, no code. R: account takeover. I: High. L: Med. Fix: TOTP enroll/verify, enforce per role/org policy, recovery codes. L · P1.
+- **Authorization / RBAC** — Write endpoints on `view:` perms (investigations/policies/reports/runbooks/detection-rules). R: privilege escalation (viewer can mutate). I: data tampering. L: High. Fix: correct guards to `act:`/`manage:`, sync rbac.ts↔DB role seed↔routes, add missing perms. S · **P0**.
+- **JWT** — Dev secrets default; 15m/7d ok. R: token forgery if defaults ship. I: Critical. L: Med. Fix: enforce strong secrets from secrets manager, refuse boot on default in prod, rotate, add `kid`/rotation support. S · **P0**.
+- **Session management** — No server-side session list/revoke; refresh in localStorage. R: stale/stolen sessions. I: Med. L: Med. Fix: sessions API + revoke, idle timeout, refresh rotation + reuse detection, consider httpOnly cookie option. M · P1.
+- **RLS / tenant isolation** — Connection-pinning risk + child tables lack RLS + identity-anomalies org filter. R: cross-tenant data leak. I: Critical (multi-tenant SaaS killer). L: Med-High under load. Fix: reserved/txn-pinned connection in `withTenant`; RLS on all child+new tables; explicit org filters defence-in-depth; automated cross-tenant isolation test. M · **P0**.
+- **Secrets** — Integration/webhook/cloud/SSO creds stored plaintext jsonb; env defaults. R: secret disclosure. I: High. L: Med. Fix: AES-GCM `lib/crypto.ts` with `ENCRYPTION_KEY` (KMS-backed), encrypt at rest, never return secrets in DTOs. M · **P0**.
+- **Encryption** — No field/at-rest encryption; TLS assumed at edge. R: data at rest exposure. I: Med. Fix: encrypt sensitive fields, enable DB encryption (managed), enforce TLS to DB. M · P1.
+- **API security** — No API-key enforcement on routes despite keys table; no idempotency. R: unauthenticated/duplicate ingestion. I: Med. Fix: api-key middleware + scopes + per-key rate-limit; Idempotency-Key on POST. M · P1.
+- **WebSocket security** — Token in query string (logs leak); no per-channel authz. R: token leak/over-broadcast. I: Med. L: Med. Fix: short-lived WS ticket, authorize subscriptions by permission, drop token-in-URL logging. S · P1.
+- **File upload** — Evidence upload not yet built. R: malware/path traversal/oversized. I: Med. Fix: type/size validation, AV scan hook, content-hash, private S3, signed URLs. M · P1 (with evidence feature).
+- **SSRF** — Webhooks/integrations POST to user URLs. R: internal network access. I: High. L: Med. Fix: URL allowlist/denylist (block private CIDRs/metadata IP), DNS-rebind protection, egress proxy. S · **P0** (before webhook delivery ships).
+- **XSS** — React escapes by default; risk in markdown notebooks/copilot HTML. R: stored XSS. I: Med. Fix: sanitize markdown (DOMPurify), CSP via helmet, no `dangerouslySetInnerHTML` unsanitized. S · P1.
+- **CSRF** — Bearer-token model (low risk). R: Low unless cookies added. Fix: keep Authorization header; if cookies, add SameSite + CSRF token. S · P2.
+- **SQL injection** — Drizzle parameterized; risk in hunt/detection raw query parser. R: injection via query DSL. I: High. L: Low-Med. Fix: parse to AST/whitelist fields (already field-based), never string-concat into SQL, tests. S · P1.
+- **Prompt injection** — Basic guard exists. R: data exfil/tool misuse via LLM. I: Med-High. L: Med. Fix: strengthen detection, isolate tool perms, human-in-loop for destructive tools, output filtering, per-workflow injection tests. M · P1.
+- **Data leakage** — RAG could retrieve cross-tenant; DTOs may leak secrets. R: tenant data exposure. I: Critical. Fix: org+permission filter on RAG retrieval, DTO whitelisting (never password_hash/secret_key/token), citation scoping. M · **P0**.
+- **Audit compliance** — Not append-only; UI bypass paths unaudited. R: tamperable trail (SOC2 fail). I: High. Fix: append-only policy, route all mutations through API, export API, retention + legal hold. M · P1.
+- **Rate limiting / DoS** — Only per-IP global. R: resource exhaustion. I: Med. Fix: per-user/per-key limits, queue backpressure, body limits (1MB present), connection caps. S · P1.
+- **Dependency/supply chain** — No SCA. R: vulnerable deps. I: Med. Fix: Dependabot/`npm audit` in CI, lockfile review. S · P2.
+
+**Security DoD:** all P0 closed before any external tenant; automated tests for RLS isolation, RBAC matrix, SSRF, prompt-injection; third-party pen test in Phase 5; SOC2 control mapping documented.
+
+---
+
+# DELIVERABLE 7 — COMPLETE INTEGRATION PLAN
+
+**Framework first** (`apps/api/src/modules/integrations/connectors/`): `Connector` interface `{ connect(config), test(), sync(cursor), disconnect(), receiveWebhook(payload) }`; registry by `provider`; secrets via `lib/crypto`; per-integration BullMQ sync job; state `last_sync_at/last_error/events_ingested/cursor` on `platform_integrations`; SSRF allowlist on all egress; retry w/ exponential backoff + DLQ; surfaced in `_app.integrations.tsx`.
+
+Per integration (FE / BE / DB / Auth / Webhook / Sync / Errors / Retry / Monitoring / Testing / Deploy / Support):
+
+- **AWS** — FE: connect wizard (role ARN/externalId). BE: STS assume-role, Config/IAM/S3/GuardDuty pull → cloud_assets/iam_findings/security_events. DB: cloud_accounts creds(enc). Auth: cross-account role. Webhook: EventBridge→ingest. Sync: 15m asset/IAM. Errors: per-region partial. Retry: backoff. Monitor: sync metrics. Test: localstack. Deploy: read-only policy doc. Support: connection health card.
+- **Azure** — FE: app-registration creds. BE: Defender for Cloud + Entra ID + Resource Graph → assets/iam/identity_anomalies. Auth: OAuth client-cred. Webhook: Event Grid. Sync: 15m. (rest per framework).
+- **GCP** — FE: service-account JSON. BE: SCC + Asset Inventory + IAM → assets/iam. Auth: SA key(enc). Sync: 15m.
+- **CrowdStrike Falcon** — FE: client id/secret. BE: Hosts + Detections + IOCs → endpoints/security_events/iocs; isolate via API (real `/isolate`). Auth: OAuth2. Stream: Falcon Streaming API → ingest. Sync: detections poll.
+- **Microsoft Defender** — BE: Defender for Endpoint alerts/machines → security_events/endpoints; response actions. Auth: Graph OAuth.
+- **Microsoft Sentinel** — BE: Log Analytics query (KQL) pull → security_events; incidents bi-dir. Auth: OAuth. Sync: scheduled query.
+- **Elastic Security** — BE: ES query DSL pull of alerts/signals → security_events; detection-rule import. Auth: API key. Sync: poll.
+- **Splunk ES** — BE: notable events via REST/saved-search → security_events. Auth: token. Sync: poll.
+- **VirusTotal** — BE: enrich IOCs/files (hash/url/ip lookup) on demand + IOC feed. Auth: API key. Cache results (rate-limited). Used by IOC detail + endpoint binaries.
+- **Recorded Future** — BE: risk lists + IOC enrichment → iocs/threat_actors. Auth: token. Sync: feed pull.
+- **AbuseIPDB** — BE: IP reputation enrichment for network_flows/events. Auth: key. Cache.
+- **Jira** — FE: project/issue-type mapping. BE: case/incident→issue create + status bi-dir; external_ref. Auth: OAuth/PAT. Webhook: Jira→update. Sync: status reconcile.
+- **ServiceNow** — BE: incident→SN incident bi-dir; external_ref. Auth: OAuth/basic. Webhook: business rule. Sync: reconcile.
+- **Slack** — FE: channel pick (OAuth). BE: OutboundNotifier (alerts/incidents/reports/SLA) via Web API/incoming webhook; interactive ack buttons. Auth: OAuth bot token(enc).
+- **Microsoft Teams** — BE: incoming webhook / Graph channel post; adaptive cards. Auth: webhook/Graph.
+- **Email** — BE: SMTP/provider (notifications, reports, invites, verify, SLA). Auth: SMTP creds(enc). Retry: queue.
+- **SMS** — BE: Twilio (critical alerts/MFA). Auth: key(enc). Cost guard.
+
+**Inbound ingestion** (shared): `POST /v1/ingest/{events,endpoint-telemetry,network-flows,dns}` api-key scoped + idempotent + metered; replaces seed-only data path.
+
+---
+
+# DELIVERABLE 8 — COMPLETE AI IMPLEMENTATION PLAN
+
+**Provider:** abstract in `copilot/llm.adapter.ts`; add Anthropic branch, default latest Claude (per stack guidance); OpenAI fallback; degraded canned mode when no key (exists). Embeddings via `EMBEDDING_MODEL`.
+
+Per capability — Current / Missing / Architecture / Data flow / Steps / Prompt / Safety / Cost / Monitoring / Eval:
+
+- **Copilot chat** — Current: sessions/messages + SSE + keyword RAG + fallback. Missing: vector RAG, tools, citations, budgets. Arch: route→workflow router→RAG retrieve→LLM stream→persist. Flow: msg→redact PII→retrieve(org-scoped)→prompt(workflow)→stream→audit+tokens. Steps: see RAG/tools below. Prompt: versioned `@nexus/ai-contracts` per `copilot_workflow`. Safety: PII redaction(exists)+injection guard+tool gating. Cost: per-org token budget from settings→usage_counters. Monitor: latency/tokens in copilot_messages. Eval: golden Q/A set, citation precision, refusal tests.
+- **Threat scoring** (`/ai/threat-scoring`) — Current: endpoints riskOverall≥60, hardcoded confidence 85. Missing: real model/calibration. Arch: feature vector (severity, asset criticality, MITRE, dedup, exposure)→weighted score→optional LLM rationale. Steps: replace constant confidence with calibrated score; nightly recalibration job. Eval: ranking vs analyst labels.
+- **Anomaly detection** (`/ai/anomalies`) — Current: reads identity_anomalies, confidence 78. Missing: compute from telemetry. Arch: rolling baselines (Redis) over security_events per (type,host,user)→z-score→flag→optional LLM explanation. Steps: `AnomalyService` + baseline job. Eval: precision/recall on injected anomalies.
+- **Recommendations** (`/ai/recommendations`) — Current: from critical/high alerts heuristic. Missing: LLM over incident context. Arch: incident+timeline+evidence→RAG runbooks→LLM ranked actions→persist incident_recommendations. Safety: action gating.
+- **Hunt assist** (`/ai/hunt-assist`) — Current: string templating. Missing: NL→query. Arch: NL→LLM→validated hunt DSL (reuse field parser)→preview. Safety: validate before run; never auto-execute destructive.
+- **RAG** — Current: ILIKE on KB+incidents. Missing: vector. Arch: pgvector `document_embeddings`; chunk KB/closed-incidents/runbooks→embed→store(org,source,chunk,vec); query embed→cosine top-k→org+permission filter→citations [KB-x]/[INC-y]. Steps: enable ext (uncomment `002_rls_and_rag.sql`), `EmbeddingService`, index jobs (on write + nightly), rewrite `rag.service.ts`. Cost: cache embeddings; batch. Eval: retrieval hit-rate, citation accuracy, cross-tenant-leak test.
+- **Embeddings/Vector search** — Missing entirely. As above. ivfflat index; dimension per model (1536).
+- **LLM integrations / Tool calling** — Missing. Tools in `copilot/tools/`: `query-events`, `create-incident`, `isolate-endpoint`(perm-gated + human confirm), `draft-runbook`. Router maps workflow→allowed tools. Safety: per-tool RBAC + audit + confirmation for destructive.
+- **Workflow automation** — Wire `copilot_workflow` enum to runbook execution (AI suggests→human approves→runbook runs). Audit every AI action to audit_logs + incident_timeline (actor_type=ai).
+- **Cross-cutting safety/cost/monitoring:** PII/secret redaction pre-prompt; prompt-injection tests per workflow; per-org+per-user budgets + 429 on breach; model pinned in `copilot_messages.model_used`; degraded-mode banner; eval suite in CI (Deliverable 10 AI tests).
+
+---
+
+# DELIVERABLE 9 — COMPLETE DEVOPS PLAN
+
+- **Infrastructure:** Managed Postgres 16 (RDS/Cloud SQL/Neon) w/ PITR + read replica; managed Redis (ElastiCache/Upstash) persistence on; S3-compatible object store (or MinIO dev); secrets manager (AWS Secrets Manager/Vault). Topology below.
+- **Containers:** existing `apps/api/Dockerfile`; add **web prod Dockerfile** (multi-stage Vite→static served by nginx or Cloudflare Pages); **worker Dockerfile** (or same image, `worker` cmd); MinIO in compose for dev.
+- **CI/CD (GitHub Actions):** PR: install→tsc(web+api)→lint→vitest(+Testcontainers)→drizzle-kit check→build→playwright smoke→SCA(npm audit/Dependabot). Main: build+push images→migrate (gated)→deploy api/worker→deploy web (Pages)→post-deploy E2E→auto-rollback on health fail.
+- **Monitoring:** Prometheus (`fastify-metrics` `/metrics`: p95/route, 5xx rate, WS conns, queue depth, job failures, DB pool); Grafana dashboards; alerting (error rate, DB lag, queue backlog, cert expiry).
+- **Logging:** pino structured JSON + request/correlation id (x-request-id exists)→aggregator (Loki/CloudWatch/Datadog); redact secrets.
+- **Tracing:** OpenTelemetry (`OTEL_*`) spans across route→service→DB→LLM→queue; export to Tempo/Jarger/Datadog.
+- **Metrics:** business (alerts/min, MTTD/MTTR, ingest EPS) + system; SLO dashboards.
+- **Backups:** automated daily + PITR (Postgres); Redis AOF; object-store versioning; restore-tested quarterly; documented runbook.
+- **DR:** cross-region replica + failover runbook; RPO ≤5m, RTO ≤1h targets; infra-as-code (Terraform) for reproducibility.
+- **Scaling:** stateless API behind LB (N replicas, HPA on CPU/RPS); separate worker pool (scale by queue depth); PgBouncer (transaction pooling — pairs with RLS txn-pinning); Redis cluster; read-replica for analytics queries.
+- **Load balancing:** L7 LB/ingress, health via `/ready`; sticky not required (stateless); WS via LB sticky or dedicated WS tier.
+- **Caching:** Redis for KPI/reference/search; HTTP cache headers for static; CDN for web assets.
+- **Queue processing:** BullMQ + Redis; per-queue concurrency, rate limits, DLQ, repeatable jobs; dashboard (Bull Board) gated by admin.
+- **Secrets management:** all secrets from manager; refuse boot on dev defaults in prod; rotation policy (JWT/LLM/DB/HMAC).
+- **Environments:** dev (compose+MinIO) / staging (prod-like) / prod; per-env config; migration gate between.
+- **Release management:** trunk-based + tagged releases; migrations forward-compatible (expand→contract); blue/green or rolling.
+- **Feature flags:** lightweight flag service (env/DB-backed `feature_flags` or Unleash) for plan-gating + staged rollout.
+- **Observability DoD:** every request traced+logged+metered; alerts fire to on-call; dashboards for SLOs.
+- **Tooling recs:** Terraform, GitHub Actions, Docker, Prometheus+Grafana, OTel+Tempo, Loki/Datadog, Sentry, BullMQ+Bull Board, PgBouncer, MinIO/S3, Stripe, Cloudflare.
+- **Deployment topology:** Cloudflare(CDN/WAF) → web (Pages/static) ; API LB → API replicas (N) → PgBouncer → Postgres(primary+replica) ; API/Worker → Redis(cluster) ; Worker pool → external integrations/LLM/S3 ; Secrets manager + OTel/Prom/Sentry side-cars.
+- **Scaling plan:** vertical first (DB), then API horizontal (HPA), worker horizontal by queue depth, partition `security_events` by time at high EPS, OpenSearch for search if >10M rows, separate analytics replica.
+
+---
+
+# DELIVERABLE 10 — COMPLETE QA PLAN
+
+- **Unit (Vitest):** services (mappers, scoring, detection-engine matching, SLA calc, dedup, RBAC checks, crypto, query-DSL parser). Target ≥80% on services/lib.
+- **Integration (Vitest + Testcontainers Postgres):** each module route↔service↔DB incl. audit-write + tenant scope; migrations up/down. Target ≥70% modules.
+- **Contract:** `@nexus/shared` Zod ↔ route I/O (parse req/res against schema); FE hook ↔ BE route shape; OpenAPI (generate from Zod) drift check.
+- **API tests:** auth flows, pagination/filter/sort, error envelopes, rate limits, idempotency.
+- **E2E (Playwright):** login; event→incident→investigation→close; alert→escalate→incident; case lifecycle + evidence/tasks; detection-rule→auto alert; report schedule→delivery; copilot RAG citations; signup→trial→subscribe; integration connect→sync. Cross-browser.
+- **Load (k6/Artillery):** event ingest at target EPS; event/incident list p95<300ms; WS fan-out N clients; report-gen concurrency.
+- **Security tests:** RBAC matrix (every role×route), authz negative tests, JWT tamper, SSRF on webhooks, XSS in markdown, SQLi in query DSL, secret-in-DTO scan.
+- **Penetration test:** third-party Phase 5 + remediation gate.
+- **Chaos:** kill worker/Redis/DB-replica; verify retries/DLQ/graceful degradation; LLM-down degraded mode.
+- **RLS tests:** two orgs seeded; assert no cross-tenant read/write on every tenant table incl. children; connection-pool concurrency fuzz (the documented risk).
+- **Tenant isolation:** RAG retrieval, search, exports, billing scoped per org under concurrency.
+- **WebSocket tests:** auth (4001 on bad token), subscription authz, push correctness, reconnect.
+- **AI evaluation:** golden set per workflow; citation precision/recall; injection refusal; hallucination/grounding; cost/latency budgets; model-version regression.
+- **Coverage targets:** services/lib ≥80%, modules ≥70%, critical E2E flows 100% present; security suite 100% of P0 controls.
+- **Execution order:** unit→integration→contract→API (per PR); E2E+security (pre-merge to main); load+chaos+pen (release gate); AI-eval (nightly + pre-release).
+- **CI integration:** PR gate (unit/integration/contract/lint/tsc/drizzle-check) + smoke E2E; main gate (full E2E + security); nightly (load/AI-eval/chaos); coverage + SCA gates fail the build.
+
+---
+
+# DELIVERABLE 11 — COMPLETE SAAS READINESS PLAN
+
+- **Tenant lifecycle:** states pending→trialing→active→past_due→suspended→canceled→deleted; transitions audited; `organizations.deleted_at` soft-delete + purge job.
+- **Signup:** public `signup.tsx` + `POST /v1/signup` → create org + admin user + default roles (seed) + trialing subscription; email verification (`email_verifications`); reCAPTCHA/abuse guard.
+- **Onboarding:** wire `_app.onboarding.tsx` 5 steps → `POST /v1/onboarding/complete` persisting workspace/region (orgs.settings), cloud connect (cloud_accounts), alert channels (notification_channels), endpoint agent instructions, integrations; idempotent + resumable.
+- **Trials:** trial_ends_at on subscription; banner + countdown; expiry job → notify + downgrade/suspend; convert via Checkout.
+- **Plans:** `plans`/`plan_features` (Free/Pro/Enterprise) with limits (events/AI tokens/endpoints/storage/seats); plan picker; feature gating via flags.
+- **Billing:** Stripe Checkout + Billing Portal (minimize PCI scope); `POST /v1/billing/checkout`, portal link, `POST /v1/billing/webhook` (verify sig → update subscription/invoices); wire `_app.billing.tsx` to real data.
+- **Subscriptions:** `subscriptions` table mirrors Stripe; status drives feature access + quota; proration/upgrade/downgrade via portal.
+- **Invoices:** `invoices` synced from Stripe; list + PDF link in billing UI.
+- **Usage metering:** `usage_counters` incremented on ingest/AI-tokens/endpoint-add/storage; period rollups; surfaced in billing; overage handling.
+- **Feature flags:** plan + staged rollout gating (server-enforced, not just UI).
+- **Tenant suspension:** past_due/abuse → read-only or blocked with banner; reversible.
+- **Tenant deletion:** confirm flow → soft-delete → scheduled hard purge (cascade) → audit; admin override.
+- **Tenant export:** `POST /v1/orgs/current/export` → async dump (JSON/CSV bundle) to S3 + signed link (GDPR/portability).
+- **Tenant backup:** per-tenant logical export schedule (beyond infra backups).
+- **Compliance:** SOC2/GDPR mapping; append-only audit; data-retention config; DPA/sub-processor docs; consent/PII handling.
+- **Support:** in-app support widget + ticket; status page (wire `_app.status.tsx`); SLA docs.
+- **Customer success:** usage/health dashboards, onboarding checklist completion tracking, in-app announcements.
+- **Admin portal:** superadmin cross-tenant ops (list orgs, impersonate w/ audit, suspend, adjust plan, view usage) — gated by `super_admin` + heavy audit.
+- **SaaS DoD:** self-serve signup→trial→paid→invite→quota→export/delete works end-to-end; billing reconciles with Stripe; suspension/deletion safe + audited.
+
+---
+
+# DELIVERABLE 12 — PRODUCTION READINESS REPORT
+
+**Completion:** Current **~48%** overall (FE 66 · BE 62 · DB 66 · Sec 53 · Integrations 15 · AI 45 · SaaS 8 · DevOps 20 · Testing 2). **Target 100%** per area, GA-ready after Phase 5.
+
+**Critical blockers (must fix before any paying tenant):**
+1. RLS connection-pinning + child-table RLS gaps → cross-tenant leak. (P0)
+2. Write-on-`view` permission bugs → privilege escalation. (P0)
+3. JWT/secret dev-defaults + plaintext integration secrets + no secret manager. (P0)
+4. Demo-password fallback + no lockout/MFA. (P0)
+5. Zero automated tests / no CI → unverifiable regressions. (P0)
+6. No SaaS layer (signup/billing/metering) → cannot transact. (P0 for commercial)
+7. No webhook SSRF allowlist before delivery ships. (P0)
+
+**Major risks:** detection engine is the product's core value and doesn't exist yet (alerts never auto-fire); integrations are stubs (parity claim vs competitors unmet); AI RAG cross-tenant leak risk; no backups/DR; single-instance (no HA).
+**Launch risks:** onboarding/billing are mock → bad first-run; static pages (status/forensics/simulation) break the "single pane" promise; no observability → blind in prod.
+**Security risks:** Deliverable 6 P0 set; audit not append-only (SOC2).
+**Operational risks:** no worker/queue (all engines missing); no metrics/alerts; manual deploy; schema drift.
+**Performance risks:** incidents list N+1; limit-only pagination on several lists; ILIKE search; no caching; WS poll every 3s.
+**Technical debt:** schema.ts↔SQL drift; local-only Zustand stores substituting for backend (accounts/profile/workspace/preferences/correlation/collaboration); ad-hoc inline Zod (no shared DTO layer); inspector 700-line file; faked stream stats.
+
+### TOP 100 REMAINING TASKS (ordered: business impact → security impact → dependency → effort)
+
+| # | Task | Module | Pri | Effort | Depends | Definition of Done |
+|--|------|--------|-----|--------|---------|--------------------|
+|1|Reserved/txn RLS connection pinning|lib/tenant|P0|M|—|Isolation test passes under pool concurrency|
+|2|Fix write-on-view permission guards|rbac/all routes|P0|S|—|Viewer cannot mutate; RBAC matrix test green|
+|3|Enforce strong JWT/secret + refuse dev defaults in prod|auth/config|P0|S|—|Boot fails on default secret in prod|
+|4|Secrets manager + AES-GCM crypto for stored creds|lib/crypto|P0|M|—|No plaintext secret in DB; secrets from manager|
+|5|Child-table + new-table RLS policies|db|P0|M|1|Every tenant table RLS-enabled; test green|
+|6|Remove demo-password fallback + lockout|auth|P0|S|3|Brute-force lockout; no fallback in prod|
+|7|BullMQ queue/worker/scheduler infra|lib/queue,worker|P0|L|—|No-op repeatable job runs in worker process|
+|8|Domain event bus|lib/events-bus|P0|M|7|Services emit; subscribers receive|
+|9|CI pipeline (tsc/lint/test/build/drizzle-check)|devops|P0|M|—|PR gate green & required|
+|10|Vitest+Testcontainers harness + RLS isolation test|qa|P0|M|7|2-org isolation test passes in CI|
+|11|Detection-rule evaluation engine + scheduler|detection|P0|L|7,8|A rule auto-creates an alert from events|
+|12|API-key middleware + scopes + per-key rate limit|middleware|P0|M|—|Ingestion requires valid scoped key|
+|13|SSRF allowlist for outbound|lib/http|P0|S|—|Private CIDR/metadata blocked; test|
+|14|Webhook delivery worker (HMAC/retry/DLQ)|developer|P1|M|7,8,13|Test webhook delivers signed payload|
+|15|Notification producer + WS push|notifications|P1|M|8|Incident change creates notification + live update|
+|16|Incident create/edit/delete + evidence(S3)|incidents|P1|L|4,7|Manual incident CRUD + upload persisted/audited|
+|17|Real incident responders/escalations tables+API|incidents|P1|M|5|Responders/escalations persisted (no MOCK)|
+|18|SLA service + breach watcher + auto-escalate|incidents|P1|M|7,17|SLA from policy; breach escalates+notifies|
+|19|Fix incidents list N+1|incidents|P1|S|—|Single query; p95<300ms at 10k|
+|20|Cases sub-resources (evidence/tasks/activity/watchers/link)|cases|P1|L|5|Case detail tabs persisted + audited|
+|21|Case detail page + forms + bulk|cases(FE)|P1|L|20|Full case lifecycle in UI|
+|22|Remove incident-detail MOCK_* + wire real|incidents(FE)|P1|M|17,18|No mock fallbacks; real panels|
+|23|Runbook execution engine + handlers|runbooks|P1|L|7,8|Runbook executes steps; logged to executions|
+|24|Async report generation + status lifecycle + S3|reports|P1|L|7|Report builds→generated; download from store|
+|25|Scheduled reports cron + delivery|reports|P1|M|24|Schedule fires + delivers via email/Slack|
+|26|pgvector + document_embeddings + embedding pipeline|copilot|P1|L|7|Embeddings indexed; ivfflat query works|
+|27|Vector RAG (org+perm scoped) + citations|copilot|P1|M|26|Copilot answers cite org KB/incidents; no leak|
+|28|LLM hunt-assist/recommendations/postmortem + Anthropic|ai|P1|M|—|Endpoints return real LLM output|
+|29|Tool-calling workflows (gated + human-in-loop)|copilot|P1|M|27|Isolate/create-incident tools work + audited|
+|30|Ingestion APIs (events/endpoint/network/dns)|ingestion|P1|M|12|Live data flows in via API + stream|
+|31|Real ForensicsService + endpoint telemetry tables|endpoints|P1|L|30|Forensics reflects real per-endpoint data|
+|32|Endpoint unisolate/scan/processes/network|endpoints|P1|M|31|Actions persisted|
+|33|Cloud connect + AWS sync connector|cloud/integrations|P1|XL|4,7|AWS account syncs assets/IAM|
+|34|Stripe billing (checkout/portal/webhook)+subscriptions|saas|P1|L|7|Subscribe + invoices reconcile with Stripe|
+|35|Signup + org creation + email verify|saas|P1|L|34|Self-serve signup→trial works|
+|36|Usage metering + quota middleware|saas|P1|M|34|Quota breach returns 429; usage shown|
+|37|Onboarding backend + wire 5 steps|saas|P1|M|35|Onboarding persists choices|
+|38|Plans/feature flags + plan gating|saas|P1|M|34|Features gated server-side by plan|
+|39|Org update + invite + user lifecycle API|users|P1|M|—|Org settings + invite persisted|
+|40|Wire Organizations page to users API (drop accounts-store)|users(FE)|P1|M|39|User mgmt persisted + audited|
+|41|Sessions/devices/PAT API + wire Profile|users|P1|M|—|Profile data server-backed|
+|42|MFA (TOTP) enroll/verify + enforce|auth|P1|L|—|MFA gate works; recovery codes|
+|43|SSO (SAML/OIDC) providers + login + wizard|auth/sso|P1|L|4|SSO login + SCIM/JIT toggles real|
+|44|Alert escalation/routing/channel CRUD + dispatch|alerts|P1|L|11,15|Drop static panels; real routing|
+|45|Detection-rule edit/delete/test/import UI|detection(FE)|P1|M|3|Dialogs functional; DELETE works|
+|46|Vuln per-tenant status + exception + bulk|vulns|P1|M|5|Status on asset_vulnerabilities; exceptions|
+|47|CVE/EPSS feed sync job|vulns/integrations|P2|M|7|Catalogue auto-updates|
+|48|Compliance detail/create/control-update/evidence|compliance|P2|L|5|Control status updates recompute score|
+|49|IOC CRUD + import + real ransomware/campaigns|threat-intel|P2|M|5|IOCs writable; intel from DB|
+|50|Threat-intel enrichment (VirusTotal/RF/AbuseIPDB)|integrations|P2|L|33|IOC/IP enrichment on demand|
+|51|Hunt save/schedule + real anomalies|hunt|P2|M|7|Saved queries persist; scheduled runs|
+|52|Network ingest + mark-malicious + aggregations|network|P2|M|30|Flows actionable + filtered|
+|53|Attack-graph generate + replay|attack-graph|P2|L|—|Graph generated from incident|
+|54|Security-graph + threat-simulation engines|graph|P2|L|53|Pages on real data|
+|55|Knowledge edit/delete/bookmark|knowledge|P3|S|—|Persisted|
+|56|Status/topology/timeline real APIs + wire|platform|P2|M|—|Static pages on real data|
+|57|Dashboard real SLA/MTTD/financial (fix ×12)|dashboard|P2|M|—|No fabricated KPIs|
+|58|Search FTS index + pagination + type filters|search|P2|M|—|tsvector search, cursor paging|
+|59|Cursor pagination on endpoints/vulns/network/intel/cloud|backend|P2|M|—|All lists cursor-paginated|
+|60|WS push (incident/alert/case/notification) + drop poll|realtime|P1|M|8|True push; real stream stats|
+|61|Optimistic updates (status/ack/mark-read/patch)|frontend|P2|M|—|Snappy UI w/ rollback|
+|62|Append-only audit + export API|audit|P1|M|—|Audit immutable; export works|
+|63|Observability: metrics+logs+tracing+Sentry|devops|P1|L|—|Dashboards + alerts live|
+|64|Backups/PITR + restore runbook|devops|P1|M|—|Restore tested|
+|65|HA: replicas+PgBouncer+Redis persistence|devops|P1|L|1|Survives instance loss|
+|66|Web prod image / Cloudflare Pages pipeline|devops|P1|M|9|Web deploys via CI|
+|67|Load tests + index tuning|qa/devops|P2|M|59|EPS + p95 targets met|
+|68|Playwright E2E for 8 core flows|qa|P1|L|10|Flows green in CI|
+|69|Security test suite (RBAC/SSRF/XSS/SQLi/injection)|qa|P1|L|10|P0 controls covered|
+|70|AI eval harness (citations/injection/grounding)|qa|P2|M|27|Nightly eval gate|
+|71|Idempotency-Key middleware on POST|middleware|P2|S|—|Duplicate POST safe|
+|72|Soft-delete + retention purge jobs|db|P2|M|7|Retention enforced; legal hold|
+|73|Tenant export (GDPR) async|saas|P2|M|7|Export bundle to S3|
+|74|Tenant suspension/deletion flows|saas|P2|M|34|Safe + audited|
+|75|Admin portal (cross-tenant, impersonate+audit)|saas|P2|L|34|Superadmin ops gated+audited|
+|76|Slack/Teams outbound notifier|integrations|P2|M|8|Alerts post to channel|
+|77|Jira/ServiceNow ticket bi-dir sync|integrations|P2|L|—|Incident↔ticket sync|
+|78|CrowdStrike/Defender EDR connectors|integrations|P2|XL|30|Endpoints/detections sync|
+|79|Sentinel/Elastic/Splunk SIEM connectors|integrations|P2|XL|30|Events sync in|
+|80|Azure/GCP cloud connectors|integrations|P2|XL|33|Assets/IAM sync|
+|81|Email/SMS providers (notify/verify/MFA/reports)|integrations|P1|M|7|Transactional delivery works|
+|82|Integration connect/test/sync UI|integrations(FE)|P2|M|33|Manage connectors in UI|
+|83|Investigation evidence/entities/AI-summary|investigations|P2|M|26|Notebook panels real|
+|84|Investigation notebook editor + drop mock array|investigations(FE)|P2|M|83|No INVESTIGATIONS fallback|
+|85|Policies create/edit/delete + real violations|policies|P2|M|—|CRUD + drop static arrays|
+|86|Preferences API + wire Settings|users|P3|S|—|Prefs server-backed|
+|87|Developer webhook edit/test + delivery log + key rotate|developer(FE)|P2|M|14|Webhook mgmt complete|
+|88|Reconcile schema.ts↔SQL drift + drizzle-kit gate|db|P1|M|9|No drift in CI|
+|89|Check/unique/FK constraints + enum CHECKs|db|P2|M|—|DB enforces invariants|
+|90|Migration down scripts + up/down CI test|db/devops|P2|M|9|Rollback tested|
+|91|DTO/validator/shared schema layer in @nexus/shared|backend|P2|L|—|All endpoints use shared contracts|
+|92|OpenAPI generated from Zod + contract tests|qa|P2|M|91|Spec published; drift caught|
+|93|Markdown/XSS sanitization + CSP|security|P1|S|—|No stored XSS; CSP enforced|
+|94|Mobile responsiveness pass all routes|frontend|P2|L|—|Usable ≤768px|
+|95|Accessibility (axe) pass all routes|frontend|P2|L|—|No critical a11y violations|
+|96|Empty/error/loading states all lists|frontend|P3|M|—|Consistent UX primitives|
+|97|Feature-flag service + plan gating wiring|saas|P2|M|38|Flags drive access|
+|98|Chaos tests (worker/Redis/DB/LLM down)|qa|P3|M|65|Graceful degradation verified|
+|99|Penetration test + remediation|security|P1|L|all P0|Pen findings closed|
+|100|GA readiness review + SLO sign-off|all|P1|M|all|All deliverables DoD met; launch checklist green|
+
+---
+
+## EXECUTION SUMMARY
+Order: Phase 0 (foundations/security/CI) → Phase 1 (core workflows) → Phase 2 (engines/automation) → Phase 3 (telemetry/AI) → Phase 4 (SaaS) → Phase 5 (integrations/observability/GA). Land tests+CI continuously from Phase 0. For a ~20-engineer org: 3 squads (Platform/Backend-engines, Frontend/UX, SaaS+Integrations) + 1 SRE/DevOps pod + 1 QA/Security pod, ~5 months to GA. **Definition of fully complete:** every Deliverable DoD met, all P0/P1 in Top-100 closed, 100% across FE/BE/DB/Security/Integrations/AI/SaaS/DevOps/Testing, pen-tested, backup-restored, SLOs live, self-serve commercial flow working.
+
+## VERIFICATION
+`tsc` 0 errors (web+api) · `npm run lint` clean · `db:migrate` + `db:check` no drift · Vitest incl. RLS isolation green w/ coverage gate · Playwright 8 core flows green · k6 EPS/p95 targets met · pen-test closed · manual: detection rule fires alert, SLA breach escalates+notifies, webhook test delivers signed, copilot cites org data, signup→trial→subscribe works, AWS syncs, tenant export produces file, backup restores.

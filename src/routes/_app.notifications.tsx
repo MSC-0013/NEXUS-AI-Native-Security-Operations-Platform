@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
   Bell,
@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/severity-badge";
 import { formatDistanceToNow } from "date-fns";
-import type { Severity } from "@/lib/mock/types";
+import type { SeverityLevel as Severity } from "@nexus/shared";
 import {
   useApiNotifications,
   useMarkNotificationRead,
@@ -27,7 +27,7 @@ import {
 export const Route = createFileRoute("/_app/notifications")({
   head: () => ({
     meta: [
-      { title: "Notifications — NEXUS" },
+      { title: "Notifications â€” NEXUS" },
       { name: "description", content: "Realtime notification center with severity grouping and read state." },
     ],
   }),
@@ -260,7 +260,7 @@ function NotificationsPage() {
         <div className="space-y-4">
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <div className="text-sm">Loading notifications…</div>
+              <div className="text-sm">Loading notificationsâ€¦</div>
             </div>
           )}
           {!isLoading && grouped.length === 0 && (
@@ -365,3 +365,4 @@ function NotificationsPage() {
     </div>
   );
 }
+

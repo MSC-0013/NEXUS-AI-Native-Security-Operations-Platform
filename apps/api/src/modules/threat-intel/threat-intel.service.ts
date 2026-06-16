@@ -1,8 +1,12 @@
-import { eq, desc, ilike, or } from "drizzle-orm";
+import { eq, and, desc, ilike, or } from "drizzle-orm";
 import type { DbClient } from "@nexus/db";
-import { threatActors, threatActorTimeline, iocs } from "@nexus/db/schema";
+import {
+  threatActors, threatActorTimeline, iocs,
+  ransomwareGroups, threatCampaigns, campaignActors, campaignEvents,
+} from "@nexus/db/schema";
 import type postgres from "postgres";
 import { withTenant } from "../../lib/tenant.js";
+import { NotFoundError } from "../../lib/errors.js";
 
 export class ThreatIntelService {
   constructor(private db: DbClient, private client: postgres.Sql) {}
@@ -54,71 +58,155 @@ export class ThreatIntelService {
         .orderBy(desc(iocs.createdAt))
         .limit(limit);
 
-      return rows.map((i) => ({
-        id: i.id,
-        type: i.iocType,
-        value: i.value,
-        context: i.context,
-        confidence: i.confidenceScore,
-        severity: i.severity,
-        isActive: i.isActive,
-      }));
+      return rows.map(mapIoc);
     });
   }
 
   async listRansomware(orgId: string, limit = 12) {
-    return withTenant(this.client, orgId, async () => [
-      { id: "r1", name: "LockBit 3.0", encryption: "AES-256 + RSA", sectors: ["Finance", "Healthcare", "Manufacturing"], recentVictims: ["Bank of Valletta", "Continental AG", "Bangkok Airways"], severity: "critical", active: true },
-      { id: "r2", name: "BlackCat / ALPHV", encryption: "AES-256 (Rust)", sectors: ["Technology", "Legal", "Education"], recentVictims: ["MGM Resorts", "Caesars", "Reddit"], severity: "critical", active: true },
-      { id: "r3", name: "Cl0p", encryption: "AES-256 + RSA", sectors: ["Finance", "Government", "Healthcare"], recentVictims: ["MOVEit mass exploit", "EY", "BBC"], severity: "high", active: true },
-      { id: "r4", name: "Royal / BlackSuit", encryption: "AES-128 + RSA", sectors: ["Healthcare", "Education", "Manufacturing"], recentVictims: ["Dallas County", "CHKD"], severity: "high", active: true },
-      { id: "r5", name: "Play", encryption: "AES-256", sectors: ["Government", "Media", "Construction"], recentVictims: ["City of Oakland", "Rackspace"], severity: "high", active: true },
-      { id: "r6", name: "Conti", encryption: "AES-256 + RSA", sectors: ["Healthcare", "Government", "Critical Infra"], recentVictims: ["HSE Ireland", "JBS Foods"], severity: "medium", active: false },
-    ].slice(0, limit));
+    return withTenant(this.client, orgId, async () => {
+      const rows = await this.db
+        .select()
+        .from(ransomwareGroups)
+        .orderBy(desc(ransomwareGroups.updatedAt))
+        .limit(limit);
+
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        encryption: r.encryption ?? "Unknown",
+        sectors: (r.sectors as string[]) ?? [],
+        recentVictims: (r.recentVictims as string[]) ?? [],
+        severity: r.severity ?? "high",
+        active: r.isActive ?? true,
+      }));
+    });
   }
 
   async listCampaigns(orgId: string, limit = 10) {
-    return withTenant(this.client, orgId, async () => [
-      {
-        id: "c1",
-        name: "Operation Midnight Blizzard",
-        actor: "APT29",
-        sectors: ["Government", "Technology", "Defense"],
-        events: [
-          { at: new Date(Date.now() - 30 * 86400000).toISOString(), desc: "Initial phishing wave targeting M365 tenants" },
-          { at: new Date(Date.now() - 21 * 86400000).toISOString(), desc: "Credential harvesting via EvilGinx proxy" },
-          { at: new Date(Date.now() - 14 * 86400000).toISOString(), desc: "Tenant-wide OAuth app implant deployed" },
-          { at: new Date(Date.now() - 5 * 86400000).toISOString(), desc: "Mail exfiltration via Graph API observed" },
-          { at: new Date(Date.now() - 1 * 86400000).toISOString(), desc: "Persistent access via backdoor service principals" },
-        ],
-        severity: "critical",
-      },
-      {
-        id: "c2",
-        name: "Clop MOVEit Campaign",
-        actor: "TA505 / Clop",
-        sectors: ["Finance", "Government", "Healthcare"],
-        events: [
-          { at: new Date(Date.now() - 60 * 86400000).toISOString(), desc: "Zero-day exploitation of MOVEit Transfer SQL injection" },
-          { at: new Date(Date.now() - 45 * 86400000).toISOString(), desc: "Mass data exfiltration from thousands of orgs" },
-          { at: new Date(Date.now() - 20 * 86400000).toISOString(), desc: "Extortion phase — leak sites updated" },
-          { at: new Date(Date.now() - 5 * 86400000).toISOString(), desc: "Supply chain downstream victims identified" },
-        ],
-        severity: "critical",
-      },
-      {
-        id: "c3",
-        name: "Scattered Spider SIM-Swap",
-        actor: "Scattered Spider",
-        sectors: ["Telecom", "Crypto", "Technology"],
-        events: [
-          { at: new Date(Date.now() - 10 * 86400000).toISOString(), desc: "Social engineering of telecom help-desk staff" },
-          { at: new Date(Date.now() - 6 * 86400000).toISOString(), desc: "SIM swaps enabling MFA bypass" },
-          { at: new Date(Date.now() - 2 * 86400000).toISOString(), desc: "Cryptocurrency exchange account takeovers" },
-          { at: new Date(Date.now() - 12 * 3600000).toISOString(), desc: "New targets identified in fintech sector" },
-        ],
-        severity: "high",
-      },
-    ].slice(0, limit));
+    return withTenant(this.client, orgId, async () => {
+      const rows = await this.db
+        .select()
+        .from(threatCampaigns)
+        .orderBy(desc(threatCampaigns.updatedAt))
+        .limit(limit);
+
+      return Promise.all(rows.map(async (c) => {
+        const [actorLinks, events] = await Promise.all([
+          this.db
+            .select({ name: threatActors.name })
+            .from(campaignActors)
+            .innerJoin(threatActors, eq(campaignActors.actorId, threatActors.id))
+            .where(eq(campaignActors.campaignId, c.id)),
+          this.db
+            .select()
+            .from(campaignEvents)
+            .where(eq(campaignEvents.campaignId, c.id))
+            .orderBy(campaignEvents.eventAt),
+        ]);
+
+        return {
+          id: c.id,
+          name: c.name,
+          actor: actorLinks.map((a) => a.name).join(" / ") || "Unknown",
+          sectors: (c.sectors as string[]) ?? [],
+          events: events.map((e) => ({ at: e.eventAt.toISOString(), desc: e.description })),
+          severity: c.severity ?? "high",
+        };
+      }));
+    });
   }
+
+  async createIoc(orgId: string, data: {
+    iocType: string;
+    value: string;
+    context?: string;
+    confidenceScore?: number;
+    severity?: string;
+    threatActorId?: string;
+    expiresAt?: string;
+  }) {
+    return withTenant(this.client, orgId, async () => {
+      const [row] = await this.db.insert(iocs).values({
+        organizationId: orgId,
+        threatActorId: data.threatActorId ?? null,
+        iocType: data.iocType,
+        value: data.value,
+        context: data.context ?? null,
+        confidenceScore: data.confidenceScore ?? 80,
+        severity: data.severity ?? "high",
+        isActive: true,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+      }).returning();
+      return mapIoc(row);
+    });
+  }
+
+  async updateIoc(orgId: string, id: string, data: {
+    context?: string;
+    confidenceScore?: number;
+    severity?: string;
+    isActive?: boolean;
+    expiresAt?: string | null;
+  }) {
+    return withTenant(this.client, orgId, async () => {
+      const updates: Partial<typeof iocs.$inferInsert> = { lastSeen: new Date() };
+      if (data.context !== undefined) updates.context = data.context;
+      if (data.confidenceScore !== undefined) updates.confidenceScore = data.confidenceScore;
+      if (data.severity !== undefined) updates.severity = data.severity;
+      if (data.isActive !== undefined) updates.isActive = data.isActive;
+      if (data.expiresAt !== undefined) updates.expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+
+      const [row] = await this.db
+        .update(iocs)
+        .set(updates)
+        // Org-scoped IOCs only — global threat-intel feed rows (organization_id
+        // IS NULL) are not editable through a single tenant's API.
+        .where(and(eq(iocs.id, id), eq(iocs.organizationId, orgId)))
+        .returning();
+      if (!row) throw new NotFoundError("IOC not found");
+      return mapIoc(row);
+    });
+  }
+
+  async deleteIoc(orgId: string, id: string) {
+    return withTenant(this.client, orgId, async () => {
+      const [deleted] = await this.db
+        .delete(iocs)
+        .where(and(eq(iocs.id, id), eq(iocs.organizationId, orgId)))
+        .returning({ id: iocs.id });
+      if (!deleted) throw new NotFoundError("IOC not found");
+    });
+  }
+
+  async importIocs(orgId: string, items: { iocType: string; value: string; severity?: string; confidenceScore?: number }[]) {
+    return withTenant(this.client, orgId, async () => {
+      if (items.length === 0) return { imported: 0 };
+      const rows = await this.db.insert(iocs).values(items.map((item) => ({
+        organizationId: orgId,
+        iocType: item.iocType,
+        value: item.value,
+        severity: item.severity ?? "high",
+        confidenceScore: item.confidenceScore ?? 80,
+        isActive: true,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+      }))).returning({ id: iocs.id });
+      return { imported: rows.length };
+    });
+  }
+}
+
+function mapIoc(i: typeof iocs.$inferSelect) {
+  return {
+    id: i.id,
+    type: i.iocType,
+    value: i.value,
+    context: i.context,
+    confidence: i.confidenceScore,
+    severity: i.severity,
+    isActive: i.isActive,
+    expiresAt: i.expiresAt?.toISOString() ?? null,
+  };
 }

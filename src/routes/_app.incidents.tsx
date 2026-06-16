@@ -9,7 +9,34 @@ import { useIncidents } from "@/lib/api-hooks";
 import { useAuth } from "@/lib/auth-store";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
-import type { Incident, IncidentStatus } from "@/lib/mock/types";
+import type { IncidentStatus } from "@nexus/shared";
+
+type IncidentStatusEx = IncidentStatus | "resolved";
+
+interface Incident {
+  id: string;
+  code: string;
+  title: string;
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  status: IncidentStatusEx;
+  assignee: string;
+  openedAt: string;
+  updatedAt?: string;
+  category?: string | null;
+  summary?: string | null;
+  affectedAssets?: number;
+  affectedUsers?: number;
+  mitre?: string[];
+  rca?: string | null;
+  recommendations?: string[];
+  linkedEventIds?: string[];
+  sla?: unknown;
+  responders?: unknown[];
+  escalations?: unknown[];
+  remediations?: unknown[];
+  timeline?: { at: string; actor: string; action: string; detail?: string }[];
+}
+
 
 export const Route = createFileRoute("/_app/incidents")({
   head: () => ({
@@ -21,12 +48,15 @@ export const Route = createFileRoute("/_app/incidents")({
   component: IncidentsPage,
 });
 
-const STATUSES: IncidentStatus[] = ["open", "investigating", "contained", "resolved"];
+const STATUSES: IncidentStatusEx[] = ["open", "investigating", "contained", "resolved"];
 
-const STATUS_STYLE: Record<IncidentStatus, string> = {
+const STATUS_STYLE: Partial<Record<IncidentStatusEx, string>> = {
   open: "bg-critical/15 text-critical border-critical/40",
   investigating: "bg-high/15 text-high border-high/40",
   contained: "bg-info/15 text-info border-info/40",
+  eradicated: "bg-info/15 text-info border-info/40",
+  recovered: "bg-healthy/15 text-healthy border-healthy/40",
+  closed: "bg-healthy/15 text-healthy border-healthy/40",
   resolved: "bg-healthy/15 text-healthy border-healthy/40",
 };
 
@@ -34,7 +64,7 @@ function IncidentsPage() {
   const user = useAuth((s) => s.user);
   const { data: apiData, isError: apiError } = useIncidents({ limit: 50 });
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<IncidentStatus[]>(["open", "investigating", "contained"]);
+  const [status, setStatus] = useState<IncidentStatusEx[]>(["open", "investigating", "contained"]);
   const [starredOnly, setStarredOnly] = useState(false);
   const openInspector = useInspector((s) => s.open);
   const overrides = useIncidentStore((s) => s.overrides);
@@ -83,7 +113,7 @@ function IncidentsPage() {
   }, [q, status, merged, overrides, starredOnly]);
 
   const counts = useMemo(() => {
-    const c: Record<IncidentStatus, number> = { open: 0, investigating: 0, contained: 0, resolved: 0 };
+    const c: Record<IncidentStatusEx, number> = { open: 0, investigating: 0, contained: 0, eradicated: 0, recovered: 0, closed: 0, resolved: 0 };
     merged.forEach((i) => { c[i.status]++; });
     return c;
   }, [merged]);
@@ -170,11 +200,11 @@ function IncidentsPage() {
                 <td className="px-4 py-3 text-[12px] font-mono">{i.assignee}</td>
                 <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground">{i.affectedAssets} assets • {i.affectedUsers} users</td>
                 <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">
-                  {formatDistanceToNow(new Date(i.updatedAt), { addSuffix: true })}
+                  {i.updatedAt ? formatDistanceToNow(new Date(i.updatedAt), { addSuffix: true }) : "—"}
                 </td>
                 <td className="px-2 py-3 text-right">
                   <button
-                    onClick={() => openInspector({ kind: "incident", incident: i })}
+                    onClick={() => openInspector({ kind: "incident", incident: i as unknown as import("@nexus/shared").IncidentDto })}
                     className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground"
                   >
                     inspect
