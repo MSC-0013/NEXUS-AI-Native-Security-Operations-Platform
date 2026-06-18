@@ -1,16 +1,26 @@
-import { Queue, Worker, QueueEvents, type Job, type Processor } from "bullmq";
-import IORedis from "ioredis";
+import {
+  Queue,
+  Worker,
+  QueueEvents,
+  type ConnectionOptions,
+  type Job,
+  type Processor,
+} from "bullmq";
 
-let redisConnection: IORedis | null = null;
+export function getRedisConnection(url: string): ConnectionOptions {
+  const parsed = new URL(url);
+  const db = parsed.pathname.length > 1 ? Number(parsed.pathname.slice(1)) : 0;
 
-export function getRedisConnection(url: string): IORedis {
-  if (!redisConnection) {
-    redisConnection = new IORedis(url, {
-      maxRetriesPerRequest: null, // required by BullMQ
-      enableReadyCheck: false,
-    });
-  }
-  return redisConnection;
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : 6379,
+    username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+    password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+    db: Number.isFinite(db) ? db : 0,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    ...(parsed.protocol === "rediss:" ? { tls: {} } : {}),
+  };
 }
 
 export type QueueName =
@@ -82,8 +92,5 @@ export async function enqueue<T>(
 
 export async function closeAllQueues(): Promise<void> {
   await Promise.all([...queues.values()].map((q) => q.close()));
-  if (redisConnection) {
-    await redisConnection.quit();
-    redisConnection = null;
-  }
+  queues.clear();
 }

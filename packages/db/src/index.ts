@@ -1,12 +1,25 @@
-import { drizzle } from "drizzle-orm/postgres-js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 
-export type DbClient = ReturnType<typeof createDb>["db"];
+export type DbClient = PostgresJsDatabase<typeof schema>;
+
+const transactionContext = new AsyncLocalStorage<DbClient>();
+
+function transactionAwareDb(baseDb: DbClient): DbClient {
+  return new Proxy(baseDb, {
+    get(target, property) {
+      const activeDb = transactionContext.getStore() ?? target;
+      const value = Reflect.get(activeDb, property, activeDb) as unknown;
+      return typeof value === "function" ? value.bind(activeDb) : value;
+    },
+  });
+}
 
 export function createDb(connectionString: string) {
   const client = postgres(connectionString, { max: 20, idle_timeout: 20 });
-  const db = drizzle(client, { schema });
+  const db = transactionAwareDb(drizzle(client, { schema }));
   return { db, client };
 }
 
@@ -26,12 +39,13 @@ export async function setTenantContext(client: postgres.Sql, orgId: string) {
 export async function withTenantTxn<T>(
   client: postgres.Sql,
   orgId: string,
-  fn: (sql: postgres.Sql) => Promise<T>,
+  fn: (sql: postgres.TransactionSql) => Promise<T>,
 ): Promise<T> {
-  return client.begin(async (txClient) => {
+  return (await client.begin(async (txClient) => {
     await txClient`SELECT set_config('app.current_org', ${orgId}, true)`;
-    return fn(txClient);
-  });
+    const txDb = drizzle(txClient, { schema });
+    return transactionContext.run(txDb, () => fn(txClient));
+  })) as T;
 }
 
 export { schema };

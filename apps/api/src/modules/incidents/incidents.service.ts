@@ -506,7 +506,6 @@ export class IncidentsService {
 
       const updateFields: Record<string, unknown> = { status: body.status, updatedAt: new Date() };
       if (body.status === "contained") updateFields.containedAt = new Date();
-      if (body.status === "resolved") updateFields.resolvedAt = new Date();
       if (body.status === "closed") updateFields.closedAt = new Date();
 
       await this.db.update(incidents).set(updateFields).where(eq(incidents.id, id));

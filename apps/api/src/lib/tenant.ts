@@ -1,44 +1,26 @@
 import type postgres from "postgres";
-import { setTenantContext } from "@nexus/db";
+import { withTenantTxn } from "@nexus/db";
 
 /**
- * Wraps fn with session-scoped tenant context.
- *
- * WARNING: This approach is safe only when the caller controls the connection
- * (e.g. inside a postgres.js transaction). For pooled connections use
- * withTenantTxn from @nexus/db directly, or the service-layer helper below.
- *
- * We keep this helper for backward-compat while migrating services to
- * explicit transactions.
+ * Runs service callbacks with a transaction-pinned tenant context. The
+ * transaction-aware DbClient from createDb routes existing `this.db` calls to
+ * the active transaction, preserving RLS without changing every service.
  */
 export async function withTenant<T>(
   client: postgres.Sql,
   orgId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  // Use SET LOCAL (true) so the config is scoped to the current transaction
-  // block when called inside begin(); outside a txn it is session-scoped but
-  // postgres.js reserves the connection for the duration of the callback chain.
-  await client.begin(async () => {
-    await setTenantContext(client, orgId);
-  });
-  // After the inner begin() the connection is released; we run fn on the same
-  // logical session. This is intentional — RLS is session-scoped in PostgreSQL
-  // when not inside a transaction. For full isolation use withTenantTxn.
-  return fn();
+  return withTenantTxn(client, orgId, async () => fn());
 }
 
 /**
- * Preferred: runs fn inside a single transaction with tenant context pinned via
- * SET LOCAL. The connection cannot be reused by another tenant mid-call.
+ * Runs fn inside a single transaction with tenant context pinned via SET LOCAL.
  */
 export async function withTenantTx<T>(
   client: postgres.Sql,
   orgId: string,
   fn: (sql: postgres.TransactionSql) => Promise<T>,
 ): Promise<T> {
-  return client.begin(async (tx) => {
-    await tx`SELECT set_config('app.current_org', ${orgId}, true)`;
-    return fn(tx);
-  });
+  return withTenantTxn(client, orgId, fn);
 }
