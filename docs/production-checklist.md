@@ -19,6 +19,12 @@ Status date: 2026-07-04
 - [x] Verified backend TypeScript build: `npm run build:api`.
 - [x] Verified frontend production build: `npm run build`.
 - [x] Verified targeted ESLint on changed executable source/config files.
+- [x] Pushed updated production deployment code to GitHub.
+- [x] Created and linked Vercel project `nexus-security-ops`.
+- [x] Set Vercel production env vars: `VITE_API_URL`, `VITE_WS_URL`.
+- [x] Deployed frontend to Vercel production.
+- [x] Verified frontend HTTP 200 at `https://nexus-security-ops.vercel.app`.
+- [x] Captured production browser screenshots for landing, blocked login, and protected-route redirect.
 
 ## Railway-Backed API Smoke Tests
 
@@ -37,22 +43,21 @@ Status date: 2026-07-04
 
 ## Pending Platform Verification
 
-- [ ] Push updated code to GitHub.
 - [ ] Deploy backend to Render.
 - [ ] Set Render env vars.
 - [ ] Confirm Render `/health` and `/ready`.
-- [ ] Deploy frontend to Vercel.
-- [ ] Set Vercel env vars.
 - [ ] Update Render `CORS_ORIGIN` with the final Vercel URL.
 - [ ] Verify production login from browser.
 - [ ] Verify production navigation across login, dashboard, incidents, alerts, cases, reports, copilot, and settings.
 - [ ] Verify report download from production browser.
 - [ ] Verify WebSocket route if the UI uses realtime event streaming.
-- [ ] Capture final screenshots and screen recordings.
+- [ ] Capture final authenticated screenshots and screen recordings.
 
 ## Known Limits
 
-- Live Vercel and Render URLs are pending account access.
+- Live frontend is available at `https://nexus-security-ops.vercel.app`.
+- Render access is still required. `https://nexus-api.onrender.com/health` and `/ready` timed out during production verification.
+- Production login, authenticated navigation, report download, and WebSocket verification are blocked until the Render backend is live.
 - Binary uploads are not implemented; current evidence flows store metadata and storage URIs.
 - Worker/Redis automation is not deployed on Render Free Tier.
 - `npm install nitro` reported dependency audit findings; do not run forced upgrades without regression testing.

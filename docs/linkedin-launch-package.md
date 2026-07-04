@@ -19,7 +19,9 @@ Key highlights:
 This project pushed me through real engineering challenges: production auth, CORS, database migrations, deployment config, security headers, seed data, and end-to-end verification. It has become one of my flagship software engineering projects and a strong foundation for future security automation work.
 
 GitHub: https://github.com/MSC-0013/NEXUS-AI-Native-Security-Operations-Platform
-Live demo: <add Vercel URL>
+Live demo: https://nexus-security-ops.vercel.app
+
+Launch note: publish the public launch post after the Render backend is live, because authenticated production flows are still blocked by the unavailable API service.
 
 ## Project Description
 
