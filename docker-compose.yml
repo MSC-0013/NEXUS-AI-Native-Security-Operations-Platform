@@ -89,7 +89,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     container_name: nexus-worker
-    command: ["node", "dist/worker.js"]
+    command: ["npx", "tsx", "src/worker.ts"]
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://nexus:nexus@postgres:5432/nexus
