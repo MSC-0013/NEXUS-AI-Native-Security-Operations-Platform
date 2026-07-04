@@ -1,9 +1,16 @@
 import { eq, and, desc, lt, ilike, or, sql, count, inArray, gte } from "drizzle-orm";
 import type { DbClient } from "@nexus/db";
 import {
-  incidents, incidentTimeline, incidentRecommendations, incidentComments,
-  incidentEvidence, incidentResponders, incidentMitreTechniques, incidentAlerts,
-  users, auditLogs,
+  incidents,
+  incidentTimeline,
+  incidentRecommendations,
+  incidentComments,
+  incidentEvidence,
+  incidentResponders,
+  incidentMitreTechniques,
+  incidentAlerts,
+  users,
+  auditLogs,
 } from "@nexus/db/schema";
 import type postgres from "postgres";
 import type { IncidentListQuery, UpdateIncidentStatus } from "@nexus/shared";
@@ -12,7 +19,13 @@ import { NotFoundError } from "../../lib/errors.js";
 
 type IncidentRow = typeof incidents.$inferSelect;
 type TimelineRow = typeof incidentTimeline.$inferSelect;
-type ResponderRow = { userId: string; role: string; joinedAt: Date | null; userName: string | null; email: string | null };
+type ResponderRow = {
+  userId: string;
+  role: string;
+  joinedAt: Date | null;
+  userName: string | null;
+  email: string | null;
+};
 
 function mapIncident(
   incident: IncidentRow,
@@ -97,10 +110,7 @@ export class IncidentsService {
       }
       if (query.search) {
         const term = `%${query.search}%`;
-        conditions.push(or(
-          ilike(incidents.title, term),
-          ilike(incidents.incidentCode, term),
-        )!);
+        conditions.push(or(ilike(incidents.title, term), ilike(incidents.incidentCode, term))!);
       }
       if (query.cursor) {
         conditions.push(lt(incidents.id, query.cursor));
@@ -122,36 +132,40 @@ export class IncidentsService {
 
       const incidentIds = slice.map((r) => r.incident.id);
 
-      const [allRecs, allTimeline, allResponders, allMitre] = incidentIds.length > 0
-        ? await Promise.all([
-            this.db
-              .select({ incidentId: incidentRecommendations.incidentId, content: incidentRecommendations.content })
-              .from(incidentRecommendations)
-              .where(inArray(incidentRecommendations.incidentId, incidentIds))
-              .orderBy(incidentRecommendations.orderIndex),
-            this.db
-              .select()
-              .from(incidentTimeline)
-              .where(inArray(incidentTimeline.incidentId, incidentIds))
-              .orderBy(desc(incidentTimeline.timestamp)),
-            this.db
-              .select({
-                incidentId: incidentResponders.incidentId,
-                userId: incidentResponders.userId,
-                role: incidentResponders.role,
-                joinedAt: incidentResponders.joinedAt,
-                userName: users.fullName,
-                email: users.email,
-              })
-              .from(incidentResponders)
-              .leftJoin(users, eq(incidentResponders.userId, users.id))
-              .where(inArray(incidentResponders.incidentId, incidentIds)),
-            this.db
-              .select()
-              .from(incidentMitreTechniques)
-              .where(inArray(incidentMitreTechniques.incidentId, incidentIds)),
-          ])
-        : [[], [], [], []];
+      const [allRecs, allTimeline, allResponders, allMitre] =
+        incidentIds.length > 0
+          ? await Promise.all([
+              this.db
+                .select({
+                  incidentId: incidentRecommendations.incidentId,
+                  content: incidentRecommendations.content,
+                })
+                .from(incidentRecommendations)
+                .where(inArray(incidentRecommendations.incidentId, incidentIds))
+                .orderBy(incidentRecommendations.orderIndex),
+              this.db
+                .select()
+                .from(incidentTimeline)
+                .where(inArray(incidentTimeline.incidentId, incidentIds))
+                .orderBy(desc(incidentTimeline.timestamp)),
+              this.db
+                .select({
+                  incidentId: incidentResponders.incidentId,
+                  userId: incidentResponders.userId,
+                  role: incidentResponders.role,
+                  joinedAt: incidentResponders.joinedAt,
+                  userName: users.fullName,
+                  email: users.email,
+                })
+                .from(incidentResponders)
+                .leftJoin(users, eq(incidentResponders.userId, users.id))
+                .where(inArray(incidentResponders.incidentId, incidentIds)),
+              this.db
+                .select()
+                .from(incidentMitreTechniques)
+                .where(inArray(incidentMitreTechniques.incidentId, incidentIds)),
+            ])
+          : [[], [], [], []];
 
       const recsByIncident = new Map<string, string[]>();
       for (const r of allRecs) {
@@ -270,17 +284,22 @@ export class IncidentsService {
     });
   }
 
-  async create(orgId: string, userId: string, userEmail: string, data: {
-    title: string;
-    description?: string;
-    severity: string;
-    category?: string;
-    affectedAssetsCount?: number;
-    affectedUsersCount?: number;
-    slaHours?: number;
-    leadInvestigatorId?: string;
-    mitreTechniques?: { mitreId: string; mitreName?: string; mitreTactic?: string }[];
-  }) {
+  async create(
+    orgId: string,
+    userId: string,
+    userEmail: string,
+    data: {
+      title: string;
+      description?: string;
+      severity: string;
+      category?: string;
+      affectedAssetsCount?: number;
+      affectedUsersCount?: number;
+      slaHours?: number;
+      leadInvestigatorId?: string;
+      mitreTechniques?: { mitreId: string; mitreName?: string; mitreTactic?: string }[];
+    },
+  ) {
     return withTenant(this.db, orgId, async () => {
       const existingCount = await this.db.$count(incidents, eq(incidents.organizationId, orgId));
       const incidentCode = `INC-${String((existingCount ?? 0) + 1).padStart(4, "0")}`;
@@ -310,23 +329,29 @@ export class IncidentsService {
         .returning();
 
       // Add creator as responder
-      await this.db.insert(incidentResponders).values({
-        incidentId: incident.id,
-        userId,
-        role: "lead",
-        joinedAt: now,
-      }).onConflictDoNothing();
+      await this.db
+        .insert(incidentResponders)
+        .values({
+          incidentId: incident.id,
+          userId,
+          role: "lead",
+          joinedAt: now,
+        })
+        .onConflictDoNothing();
 
       // Seed MITRE techniques
       if (data.mitreTechniques?.length) {
-        await this.db.insert(incidentMitreTechniques).values(
-          data.mitreTechniques.map((m) => ({
-            incidentId: incident.id,
-            mitreId: m.mitreId,
-            mitreName: m.mitreName,
-            mitreTactic: m.mitreTactic,
-          })),
-        ).onConflictDoNothing();
+        await this.db
+          .insert(incidentMitreTechniques)
+          .values(
+            data.mitreTechniques.map((m) => ({
+              incidentId: incident.id,
+              mitreId: m.mitreId,
+              mitreName: m.mitreName,
+              mitreTactic: m.mitreTactic,
+            })),
+          )
+          .onConflictDoNothing();
       }
 
       // Timeline entry
@@ -355,16 +380,22 @@ export class IncidentsService {
     });
   }
 
-  async update(orgId: string, id: string, userId: string, userEmail: string, data: {
-    title?: string;
-    description?: string;
-    severity?: string;
-    category?: string;
-    summary?: string;
-    remediationSteps?: string;
-    affectedAssetsCount?: number;
-    affectedUsersCount?: number;
-  }) {
+  async update(
+    orgId: string,
+    id: string,
+    userId: string,
+    userEmail: string,
+    data: {
+      title?: string;
+      description?: string;
+      severity?: string;
+      category?: string;
+      summary?: string;
+      remediationSteps?: string;
+      affectedAssetsCount?: number;
+      affectedUsersCount?: number;
+    },
+  ) {
     return withTenant(this.db, orgId, async () => {
       const [existing] = await this.db
         .select()
@@ -380,9 +411,12 @@ export class IncidentsService {
       if (data.severity !== undefined) updateFields.severity = data.severity;
       if (data.category !== undefined) updateFields.category = data.category;
       if (data.summary !== undefined) updateFields.summary = data.summary;
-      if (data.remediationSteps !== undefined) updateFields.remediationSteps = data.remediationSteps;
-      if (data.affectedAssetsCount !== undefined) updateFields.affectedAssetsCount = data.affectedAssetsCount;
-      if (data.affectedUsersCount !== undefined) updateFields.affectedUsersCount = data.affectedUsersCount;
+      if (data.remediationSteps !== undefined)
+        updateFields.remediationSteps = data.remediationSteps;
+      if (data.affectedAssetsCount !== undefined)
+        updateFields.affectedAssetsCount = data.affectedAssetsCount;
+      if (data.affectedUsersCount !== undefined)
+        updateFields.affectedUsersCount = data.affectedUsersCount;
 
       await this.db.update(incidents).set(updateFields).where(eq(incidents.id, id));
 
@@ -463,10 +497,9 @@ export class IncidentsService {
     return withTenant(this.db, orgId, async () => {
       await this.db
         .delete(incidentResponders)
-        .where(and(
-          eq(incidentResponders.incidentId, incidentId),
-          eq(incidentResponders.userId, userId),
-        ));
+        .where(
+          and(eq(incidentResponders.incidentId, incidentId), eq(incidentResponders.userId, userId)),
+        );
     });
   }
 
@@ -523,7 +556,13 @@ export class IncidentsService {
     });
   }
 
-  async escalate(orgId: string, id: string, reason: string, newSeverity: string | undefined, actorName: string) {
+  async escalate(
+    orgId: string,
+    id: string,
+    reason: string,
+    newSeverity: string | undefined,
+    actorName: string,
+  ) {
     return withTenant(this.db, orgId, async () => {
       const updateFields: Record<string, unknown> = {
         escalated: true,
@@ -532,9 +571,10 @@ export class IncidentsService {
       };
       if (newSeverity) updateFields.severity = newSeverity;
 
-      await this.db.update(incidents).set(updateFields).where(
-        and(eq(incidents.id, id), eq(incidents.organizationId, orgId)),
-      );
+      await this.db
+        .update(incidents)
+        .set(updateFields)
+        .where(and(eq(incidents.id, id), eq(incidents.organizationId, orgId)));
 
       await this.db.insert(incidentTimeline).values({
         incidentId: id,
@@ -588,11 +628,14 @@ export class IncidentsService {
 
   async addComment(orgId: string, incidentId: string, authorId: string, content: string) {
     return withTenant(this.db, orgId, async () => {
-      const [row] = await this.db.insert(incidentComments).values({
-        incidentId,
-        authorId,
-        content,
-      }).returning();
+      const [row] = await this.db
+        .insert(incidentComments)
+        .values({
+          incidentId,
+          authorId,
+          content,
+        })
+        .returning();
       return {
         id: row.id,
         content: row.content,
@@ -627,24 +670,32 @@ export class IncidentsService {
     });
   }
 
-  async addEvidence(orgId: string, incidentId: string, addedBy: string, data: {
-    type: string;
-    title: string;
-    description?: string;
-    fileName?: string;
-    fileSizeBytes?: number;
-    mimeType?: string;
-    storageUri?: string;
-    hashSha256?: string;
-    isSensitive?: boolean;
-  }) {
+  async addEvidence(
+    orgId: string,
+    incidentId: string,
+    addedBy: string,
+    data: {
+      type: string;
+      title: string;
+      description?: string;
+      fileName?: string;
+      fileSizeBytes?: number;
+      mimeType?: string;
+      storageUri?: string;
+      hashSha256?: string;
+      isSensitive?: boolean;
+    },
+  ) {
     return withTenant(this.db, orgId, async () => {
-      const [row] = await this.db.insert(incidentEvidence).values({
-        incidentId,
-        addedBy,
-        ...data,
-        addedAt: new Date(),
-      }).returning();
+      const [row] = await this.db
+        .insert(incidentEvidence)
+        .values({
+          incidentId,
+          addedBy,
+          ...data,
+          addedAt: new Date(),
+        })
+        .returning();
       return {
         id: row.id,
         type: row.type,
@@ -658,9 +709,10 @@ export class IncidentsService {
 
   async updateSeverity(orgId: string, id: string, severity: string, actorName: string) {
     return withTenant(this.db, orgId, async () => {
-      await this.db.update(incidents).set({ severity, updatedAt: new Date() }).where(
-        and(eq(incidents.id, id), eq(incidents.organizationId, orgId)),
-      );
+      await this.db
+        .update(incidents)
+        .set({ severity, updatedAt: new Date() })
+        .where(and(eq(incidents.id, id), eq(incidents.organizationId, orgId)));
       await this.db.insert(incidentTimeline).values({
         incidentId: id,
         timestamp: new Date(),
@@ -723,14 +775,22 @@ export class IncidentsService {
     });
   }
 
-  async createRemediation(orgId: string, incidentId: string, data: { title: string; assignee?: string; dueDate?: string }, actorName: string) {
+  async createRemediation(
+    orgId: string,
+    incidentId: string,
+    data: { title: string; assignee?: string; dueDate?: string },
+    actorName: string,
+  ) {
     return withTenant(this.db, orgId, async () => {
-      const [row] = await this.db.insert(incidentRecommendations).values({
-        incidentId,
-        content: data.title,
-        isCompleted: false,
-        orderIndex: 0,
-      }).returning();
+      const [row] = await this.db
+        .insert(incidentRecommendations)
+        .values({
+          incidentId,
+          content: data.title,
+          isCompleted: false,
+          orderIndex: 0,
+        })
+        .returning();
       return {
         id: row.id,
         title: row.content,
@@ -759,19 +819,39 @@ export class IncidentsService {
     };
   }
 
-  generatePostmortemTemplate(incident: { id: string; code: string; title: string; severity: string; openedAt: string; summary: string; rca: string }) {
+  generatePostmortemTemplate(incident: {
+    id: string;
+    code: string;
+    title: string;
+    severity: string;
+    openedAt: string;
+    summary: string;
+    rca: string;
+  }) {
     return {
       incidentId: incident.id,
       code: incident.code,
       generatedAt: new Date().toISOString(),
       sections: [
-        { title: "Incident Summary", content: incident.summary || `${incident.title} — severity: ${incident.severity}` },
+        {
+          title: "Incident Summary",
+          content: incident.summary || `${incident.title} — severity: ${incident.severity}`,
+        },
         { title: "Timeline", content: "See incident timeline for full chronology." },
         { title: "Root Cause Analysis", content: incident.rca || "Root cause analysis pending." },
         { title: "Impact Assessment", content: "Document affected systems, users, and data." },
-        { title: "Detection & Response Evaluation", content: "Evaluate time-to-detect and time-to-respond against SLA targets." },
-        { title: "Remediation Actions Taken", content: "List all remediation steps completed during response." },
-        { title: "Lessons Learned & Action Items", content: "Document process improvements and assign follow-up tasks." },
+        {
+          title: "Detection & Response Evaluation",
+          content: "Evaluate time-to-detect and time-to-respond against SLA targets.",
+        },
+        {
+          title: "Remediation Actions Taken",
+          content: "List all remediation steps completed during response.",
+        },
+        {
+          title: "Lessons Learned & Action Items",
+          content: "Document process improvements and assign follow-up tasks.",
+        },
       ],
     };
   }
@@ -781,12 +861,14 @@ export class IncidentsService {
     const breached = await this.db
       .select({ id: incidents.id, incidentCode: incidents.incidentCode })
       .from(incidents)
-      .where(and(
-        eq(incidents.organizationId, orgId),
-        eq(incidents.slaBreached, false),
-        sql`${incidents.slaBreachAt} <= ${now}`,
-        sql`${incidents.status} NOT IN ('resolved', 'closed')`,
-      ));
+      .where(
+        and(
+          eq(incidents.organizationId, orgId),
+          eq(incidents.slaBreached, false),
+          sql`${incidents.slaBreachAt} <= ${now}`,
+          sql`${incidents.status} NOT IN ('recovered', 'closed')`,
+        ),
+      );
 
     for (const inc of breached) {
       await this.db

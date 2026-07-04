@@ -4,7 +4,11 @@ import type { DbClient } from "@nexus/db";
 import { users, roles, userSessions, organizations } from "@nexus/db/schema";
 import type postgres from "postgres";
 import { UnauthorizedError } from "../../lib/errors.js";
-import { signAccessToken, signRefreshToken, type JwtPayload } from "../../middleware/authenticate.js";
+import {
+  signAccessToken,
+  signRefreshToken,
+  type JwtPayload,
+} from "../../middleware/authenticate.js";
 import type { Env } from "../../config/env.js";
 import { withTenant } from "../../lib/tenant.js";
 
@@ -65,14 +69,13 @@ export class AuthService {
       throw new UnauthorizedError(`Account locked. Try again in ${remainingMin} minute(s)`);
     }
 
-    if (user.status === "disabled") {
-      throw new UnauthorizedError("Account disabled");
+    if (user.status !== "active") {
+      throw new UnauthorizedError("Account inactive");
     }
 
     const isDemoPass = DEMO_PASSWORDS[user.email] === password;
     const valid =
-      isDemoPass ||
-      (user.passwordHash ? await bcrypt.compare(password, user.passwordHash) : false);
+      isDemoPass || (user.passwordHash ? await bcrypt.compare(password, user.passwordHash) : false);
 
     if (!valid) {
       const newCount = (user.failedLoginCount ?? 0) + 1;
@@ -172,7 +175,7 @@ export class AuthService {
       .where(eq(users.id, userId))
       .limit(1);
 
-    if (!user || user.status === "disabled") throw new UnauthorizedError("User not found");
+    if (!user || user.status !== "active") throw new UnauthorizedError("User not found");
 
     // Update last active
     void this.db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, userId));

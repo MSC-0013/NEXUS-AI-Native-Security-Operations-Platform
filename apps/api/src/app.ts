@@ -34,11 +34,25 @@ export async function buildApp() {
   app.decorate("db", db);
   app.decorate("pgClient", client);
 
-  const corsOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+  const corsOrigins = env.CORS_ORIGIN.split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.log.info({ corsOrigins }, "CORS origins loaded");
 
   await app.register(cors, {
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const allowed = corsOrigins.some((allowedOrigin) => {
+        if (allowedOrigin === "*") return true;
+        if (allowedOrigin === origin) return true;
+        if (allowedOrigin.startsWith("https://*.") && origin.startsWith("https://")) {
+          const suffix = allowedOrigin.slice("https://*".length);
+          return origin.endsWith(suffix);
+        }
+        return false;
+      });
+      callback(null, allowed);
+    },
     credentials: true,
   });
 

@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
 
 export class ApiError extends Error {
   constructor(
@@ -49,10 +49,7 @@ async function refreshAccessToken(): Promise<string | null> {
   return data.accessToken;
 }
 
-export async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const tokens = getStoredTokens();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -151,7 +148,7 @@ export async function apiStream(
 }
 
 export function getWsUrl(path: string): string {
-  const wsBase = import.meta.env.VITE_WS_URL ?? API_URL.replace(/^http/, "ws");
+  const wsBase = (import.meta.env.VITE_WS_URL ?? API_URL.replace(/^http/, "ws")).replace(/\/$/, "");
   const tokens = getStoredTokens();
   const sep = path.includes("?") ? "&" : "?";
   return `${wsBase}${path}${tokens?.accessToken ? `${sep}token=${tokens.accessToken}` : ""}`;
